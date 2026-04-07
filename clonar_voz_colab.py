@@ -5,7 +5,7 @@
 # ============================================================
 
 # PASO 1: Instalar dependencias
-# !pip install TTS==0.22.0 transformers==4.44.2 -q
+# !pip install -q coqui-tts transformers==4.44.2
 
 # PASO 2: Subir el archivo de voz de referencia a Colab
 # En el panel izquierdo de Colab, hacé click en el ícono de carpeta,
