@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "nyiujf8jei7cazH_MbRHL"
+uri = "file://lolo_cd_output.mp3"
+type = "audio"
+title = "nepe flacido flacido"
