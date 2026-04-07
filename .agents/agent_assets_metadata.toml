@@ -312,3 +312,9 @@ id = "4YpGeA6lJIxFXQGjZA5b3"
 uri = "file://voz_clonada_diever.wav"
 type = "audio"
 title = "Voz clonada - Diever Muñoz"
+
+[[outputs]]
+id = "MqNGmgqMJriEFoc9_ybyC"
+uri = "file://diever_2_minutos.wav"
+type = "audio"
+title = "Diever Muñoz - 2 minutos (voz clonada)"
