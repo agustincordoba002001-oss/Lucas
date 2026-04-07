@@ -12,3 +12,27 @@ id = "rJMdOMIsKnB3_HGdkQHht"
 uri = "file://lolo_cd_voz.mp3"
 type = "audio"
 title = "nepe flacido flacido - Diever (es-CO)"
+
+[[outputs]]
+id = "d8xG1T5ZoIXH-wIoFKHA_"
+uri = "file://muestra_1_alvaro_es.mp3"
+type = "audio"
+title = "Opción 1 - Álvaro (España) tono grave suave"
+
+[[outputs]]
+id = "PTgtEUUnbzuOoPbg8jVyL"
+uri = "file://muestra_2_tomas_ar.mp3"
+type = "audio"
+title = "Opción 2 - Tomás (Argentina) tono grave"
+
+[[outputs]]
+id = "EKbzqBkaJwnAtnVQIfkDd"
+uri = "file://muestra_3_mateo_uy.mp3"
+type = "audio"
+title = "Opción 3 - Mateo (Uruguay) más pausado"
+
+[[outputs]]
+id = "HelEdLaHeMcmlfkuZdFZc"
+uri = "file://muestra_4_gonzalo_co.mp3"
+type = "audio"
+title = "Opción 4 - Gonzalo (Colombia) más pausado"
