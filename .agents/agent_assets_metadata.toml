@@ -36,3 +36,273 @@ id = "HelEdLaHeMcmlfkuZdFZc"
 uri = "file://muestra_4_gonzalo_co.mp3"
 type = "audio"
 title = "Opción 4 - Gonzalo (Colombia) más pausado"
+
+[[outputs]]
+id = "RfIdKBXnImXqMtOPa1g7U"
+uri = "file://voz_es-AR-TomasNeural.mp3"
+type = "audio"
+title = "Argentina - Tomás (M)"
+
+[[outputs]]
+id = "9ltLKjWEUcLTy-iR9Q6uT"
+uri = "file://voz_es-AR-ElenaNeural.mp3"
+type = "audio"
+title = "Argentina - Elena (F)"
+
+[[outputs]]
+id = "VCI5c2pSC-7p-pGd1kPme"
+uri = "file://voz_es-BO-MarceloNeural.mp3"
+type = "audio"
+title = "Bolivia - Marcelo (M)"
+
+[[outputs]]
+id = "IEPykuKoW9ug-oHNE25Gb"
+uri = "file://voz_es-BO-SofiaNeural.mp3"
+type = "audio"
+title = "Bolivia - Sofía (F)"
+
+[[outputs]]
+id = "2cUsZsg6UnctqYxF7C5Nk"
+uri = "file://voz_es-CL-LorenzoNeural.mp3"
+type = "audio"
+title = "Chile - Lorenzo (M)"
+
+[[outputs]]
+id = "jVLf4PPbUzkb6p6eaHpuL"
+uri = "file://voz_es-CL-CatalinaNeural.mp3"
+type = "audio"
+title = "Chile - Catalina (F)"
+
+[[outputs]]
+id = "sjQCJv7iQFLVTpoe0vvjD"
+uri = "file://voz_es-CO-GonzaloNeural.mp3"
+type = "audio"
+title = "Colombia - Gonzalo (M)"
+
+[[outputs]]
+id = "4eQBNRcXwAUeSH1Rlkczg"
+uri = "file://voz_es-CO-SalomeNeural.mp3"
+type = "audio"
+title = "Colombia - Salome (F)"
+
+[[outputs]]
+id = "_wVl9hcwScJmV48EBcMW7"
+uri = "file://voz_es-CR-JuanNeural.mp3"
+type = "audio"
+title = "Costa Rica - Juan (M)"
+
+[[outputs]]
+id = "rOCtU5sjdtVI7X1kj_8ks"
+uri = "file://voz_es-CR-MariaNeural.mp3"
+type = "audio"
+title = "Costa Rica - María (F)"
+
+[[outputs]]
+id = "6-FcZ9pHS-8vpdnQpUBnq"
+uri = "file://voz_es-CU-ManuelNeural.mp3"
+type = "audio"
+title = "Cuba - Manuel (M)"
+
+[[outputs]]
+id = "OQTE5cidRE2l-XFrKlhhV"
+uri = "file://voz_es-CU-BelkysNeural.mp3"
+type = "audio"
+title = "Cuba - Belkys (F)"
+
+[[outputs]]
+id = "_562XJqjMv5qjZOwU___x"
+uri = "file://voz_es-DO-EmilioNeural.mp3"
+type = "audio"
+title = "Rep. Dominicana - Emilio (M)"
+
+[[outputs]]
+id = "E6g23_63w-1xljJJji1zj"
+uri = "file://voz_es-DO-RamonaNeural.mp3"
+type = "audio"
+title = "Rep. Dominicana - Ramona (F)"
+
+[[outputs]]
+id = "OkKijr8Z7qT_Y-gDlGn67"
+uri = "file://voz_es-EC-LuisNeural.mp3"
+type = "audio"
+title = "Ecuador - Luis (M)"
+
+[[outputs]]
+id = "-t5e9HvSNG7tX53jV2-AD"
+uri = "file://voz_es-EC-AndreaNeural.mp3"
+type = "audio"
+title = "Ecuador - Andrea (F)"
+
+[[outputs]]
+id = "m8TufL7G-cTqgbxQqc8cX"
+uri = "file://voz_es-SV-RodrigoNeural.mp3"
+type = "audio"
+title = "El Salvador - Rodrigo (M)"
+
+[[outputs]]
+id = "tWR6P08sywR-QCuoYyGn9"
+uri = "file://voz_es-SV-LorenaNeural.mp3"
+type = "audio"
+title = "El Salvador - Lorena (F)"
+
+[[outputs]]
+id = "My3oGB9lcGQoqvKszssAH"
+uri = "file://voz_es-GQ-JavierNeural.mp3"
+type = "audio"
+title = "Guinea Ecuatorial - Javier (M)"
+
+[[outputs]]
+id = "oRaeIkW2hV4qZO-lMVACO"
+uri = "file://voz_es-GQ-TeresaNeural.mp3"
+type = "audio"
+title = "Guinea Ecuatorial - Teresa (F)"
+
+[[outputs]]
+id = "L6BHL9mv5ZyyQzJextWKq"
+uri = "file://voz_es-GT-AndresNeural.mp3"
+type = "audio"
+title = "Guatemala - Andrés (M)"
+
+[[outputs]]
+id = "VZcnq97LNRWzEJsXwOSmB"
+uri = "file://voz_es-GT-MartaNeural.mp3"
+type = "audio"
+title = "Guatemala - Marta (F)"
+
+[[outputs]]
+id = "04fD3QoJNOrUqgAzbblBQ"
+uri = "file://voz_es-HN-CarlosNeural.mp3"
+type = "audio"
+title = "Honduras - Carlos (M)"
+
+[[outputs]]
+id = "5CSgMx4jnjBwC3iX3dW-j"
+uri = "file://voz_es-HN-KarlaNeural.mp3"
+type = "audio"
+title = "Honduras - Karla (F)"
+
+[[outputs]]
+id = "aFdzV_8co4A9LS4fF4cuG"
+uri = "file://voz_es-MX-JorgeNeural.mp3"
+type = "audio"
+title = "México - Jorge (M)"
+
+[[outputs]]
+id = "j4qMAhYIPxhC6sLe-EcvH"
+uri = "file://voz_es-MX-DaliaNeural.mp3"
+type = "audio"
+title = "México - Dalia (F)"
+
+[[outputs]]
+id = "-cwPB37FjRuptkeVxi4EU"
+uri = "file://voz_es-NI-FedericoNeural.mp3"
+type = "audio"
+title = "Nicaragua - Federico (M)"
+
+[[outputs]]
+id = "hYl6F6-JXrezKlnShEwLR"
+uri = "file://voz_es-NI-YolandaNeural.mp3"
+type = "audio"
+title = "Nicaragua - Yolanda (F)"
+
+[[outputs]]
+id = "wGL3ccWmxN0Lq8M22ZOFy"
+uri = "file://voz_es-PA-RobertoNeural.mp3"
+type = "audio"
+title = "Panamá - Roberto (M)"
+
+[[outputs]]
+id = "J1Zlvt1LFGberPlm0NKj9"
+uri = "file://voz_es-PA-MargaritaNeural.mp3"
+type = "audio"
+title = "Panamá - Margarita (F)"
+
+[[outputs]]
+id = "POdnmj4bKDTrlZeO9d_7C"
+uri = "file://voz_es-PY-MarioNeural.mp3"
+type = "audio"
+title = "Paraguay - Mario (M)"
+
+[[outputs]]
+id = "dC71cK4BToXVPxk4E9qmm"
+uri = "file://voz_es-PY-TaniaNeural.mp3"
+type = "audio"
+title = "Paraguay - Tania (F)"
+
+[[outputs]]
+id = "T2ZfPY20sscbpQKTbyy5T"
+uri = "file://voz_es-PE-AlexNeural.mp3"
+type = "audio"
+title = "Perú - Alex (M)"
+
+[[outputs]]
+id = "FWhhoB3lHWbmoBFNip4hw"
+uri = "file://voz_es-PE-CamilaNeural.mp3"
+type = "audio"
+title = "Perú - Camila (F)"
+
+[[outputs]]
+id = "8NkJW15gkXo_H3evHTVS_"
+uri = "file://voz_es-PR-VictorNeural.mp3"
+type = "audio"
+title = "Puerto Rico - Víctor (M)"
+
+[[outputs]]
+id = "m8e9cFiwDCSKDnOqTpNdT"
+uri = "file://voz_es-PR-KarinaNeural.mp3"
+type = "audio"
+title = "Puerto Rico - Karina (F)"
+
+[[outputs]]
+id = "8fPQR9E4ExAKiulrFYt84"
+uri = "file://voz_es-ES-AlvaroNeural.mp3"
+type = "audio"
+title = "España - Álvaro (M)"
+
+[[outputs]]
+id = "YSk-qsBK-a-_eHxR8u_ZB"
+uri = "file://voz_es-ES-ElviraNeural.mp3"
+type = "audio"
+title = "España - Elvira (F)"
+
+[[outputs]]
+id = "hYSganVxFHUDgRJu_spvk"
+uri = "file://voz_es-ES-XimenaNeural.mp3"
+type = "audio"
+title = "España - Ximena (F)"
+
+[[outputs]]
+id = "K1-yZQmabBScLPVhl9NRs"
+uri = "file://voz_es-US-AlonsoNeural.mp3"
+type = "audio"
+title = "EE.UU. - Alonso (M)"
+
+[[outputs]]
+id = "2KT0GY1_QopTPx3-TI_C9"
+uri = "file://voz_es-US-PalomaNeural.mp3"
+type = "audio"
+title = "EE.UU. - Paloma (F)"
+
+[[outputs]]
+id = "tLGa65_ib_7r1ZC4ic5XQ"
+uri = "file://voz_es-UY-MateoNeural.mp3"
+type = "audio"
+title = "Uruguay - Mateo (M)"
+
+[[outputs]]
+id = "v1a-zwTdYzdiOm_0vRcA5"
+uri = "file://voz_es-UY-ValentinaNeural.mp3"
+type = "audio"
+title = "Uruguay - Valentina (F)"
+
+[[outputs]]
+id = "ntNEtClDO4NDeLaiyJbyJ"
+uri = "file://voz_es-VE-SebastianNeural.mp3"
+type = "audio"
+title = "Venezuela - Sebastián (M)"
+
+[[outputs]]
+id = "tt6T1Jn8z4qHi_4RrZFak"
+uri = "file://voz_es-VE-PaolaNeural.mp3"
+type = "audio"
+title = "Venezuela - Paola (F)"
