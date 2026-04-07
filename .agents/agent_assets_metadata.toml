@@ -306,3 +306,9 @@ id = "tt6T1Jn8z4qHi_4RrZFak"
 uri = "file://voz_es-VE-PaolaNeural.mp3"
 type = "audio"
 title = "Venezuela - Paola (F)"
+
+[[outputs]]
+id = "4YpGeA6lJIxFXQGjZA5b3"
+uri = "file://voz_clonada_diever.wav"
+type = "audio"
+title = "Voz clonada - Diever Muñoz"
