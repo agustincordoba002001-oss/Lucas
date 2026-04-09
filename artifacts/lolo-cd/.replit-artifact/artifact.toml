@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Motor Lolo CD"
+version = "1.0.0"
+id = "artifacts/lolo-cd"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23722
+
+[services.development]
+run = "pnpm --filter @workspace/lolo-cd run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/lolo-cd", "run", "build" ]
+publicDir = "artifacts/lolo-cd/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23722"
+BASE_PATH = "/"

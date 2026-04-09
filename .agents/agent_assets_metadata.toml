@@ -318,3 +318,9 @@ id = "MqNGmgqMJriEFoc9_ybyC"
 uri = "file://diever_2_minutos.wav"
 type = "audio"
 title = "Diever Muñoz - 2 minutos (voz clonada)"
+
+[[outputs]]
+id = "AB9GpdhRA21R0URy0TLIV"
+uri = "file://test_motor_lolo_cd.mp3"
+type = "audio"
+title = "Motor Lolo CD - Servidor funcionando"
