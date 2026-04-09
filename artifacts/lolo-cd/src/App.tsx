@@ -2,16 +2,18 @@ import { useState, useRef, useEffect } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface Voice { id: string; name: string; }
+interface Voice { id: string; name: string; cloned: boolean; }
 
 export default function App() {
   const [texto, setTexto] = useState("");
-  const [voiceId, setVoiceId] = useState("gonzalo-co");
+  const [voiceId, setVoiceId] = useState("diever");
   const [voices, setVoices] = useState<Voice[]>([]);
   const [loading, setLoading] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+
+  const selectedVoice = voices.find((v) => v.id === voiceId);
 
   useEffect(() => {
     fetch(`${BASE}/api/tts/voices`)
@@ -47,83 +49,129 @@ export default function App() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f0f11", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', sans-serif", padding: "24px" }}>
-      <div style={{ width: "100%", maxWidth: 560, background: "#18181b", borderRadius: 20, padding: "40px 36px", boxShadow: "0 0 60px rgba(0,0,0,0.6)" }}>
+    <div style={{ minHeight: "100vh", background: "#0a0a0d", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', sans-serif", padding: "24px" }}>
+      <div style={{ width: "100%", maxWidth: 580 }}>
 
-        <div style={{ marginBottom: 32, textAlign: "center" }}>
-          <div style={{ fontSize: 36, fontWeight: 800, color: "#fff", letterSpacing: "-1px" }}>
-            Motor <span style={{ color: "#a855f7" }}>Lolo CD</span>
+        {/* Header */}
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ fontSize: 40, fontWeight: 900, color: "#fff", letterSpacing: "-1.5px" }}>
+            Motor <span style={{ background: "linear-gradient(135deg, #7c3aed, #c026d3)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Lolo CD</span>
           </div>
-          <div style={{ marginTop: 6, color: "#71717a", fontSize: 14 }}>
-            Texto a voz · Servidor hace todo · Celular solo escucha
+          <div style={{ marginTop: 8, color: "#52525b", fontSize: 13 }}>
+            IA de voz en el servidor · Celular solo escucha · Costo $0
           </div>
         </div>
 
-        <div style={{ marginBottom: 16 }}>
-          <label style={{ display: "block", color: "#a1a1aa", fontSize: 13, marginBottom: 8, fontWeight: 500 }}>VOZ</label>
-          <select
-            value={voiceId}
-            onChange={(e) => setVoiceId(e.target.value)}
-            style={{ width: "100%", background: "#27272a", color: "#fff", border: "1px solid #3f3f46", borderRadius: 10, padding: "10px 14px", fontSize: 14, outline: "none", cursor: "pointer" }}
+        {/* Card */}
+        <div style={{ background: "#18181b", borderRadius: 20, padding: "32px 28px", border: "1px solid #27272a" }}>
+
+          {/* Voice selector */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: "block", color: "#71717a", fontSize: 12, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>ELEGIR VOZ</label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              {voices.map((v) => (
+                <button
+                  key={v.id}
+                  onClick={() => setVoiceId(v.id)}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: voiceId === v.id
+                      ? "1.5px solid #a855f7"
+                      : "1.5px solid #27272a",
+                    background: voiceId === v.id
+                      ? "rgba(168,85,247,0.12)"
+                      : "#111113",
+                    color: voiceId === v.id ? "#d8b4fe" : "#71717a",
+                    fontSize: 13,
+                    fontWeight: voiceId === v.id ? 600 : 400,
+                    cursor: "pointer",
+                    textAlign: "left",
+                    transition: "all 0.15s",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {v.cloned && (
+                    <span style={{ background: "linear-gradient(135deg,#7c3aed,#c026d3)", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                      CLONADA
+                    </span>
+                  )}
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</span>
+                </button>
+              ))}
+            </div>
+
+            {selectedVoice?.cloned && (
+              <div style={{ marginTop: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(168,85,247,0.2)", borderRadius: 8, padding: "8px 12px", color: "#a78bfa", fontSize: 12 }}>
+                La voz clonada usa IA avanzada en el servidor. Tarda ~30 segundos. Vale la pena.
+              </div>
+            )}
+          </div>
+
+          {/* Text input */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: "block", color: "#71717a", fontSize: 12, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>
+              TEXTO <span style={{ color: "#3f3f46", fontWeight: 400 }}>({texto.length}/5000)</span>
+            </label>
+            <textarea
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              placeholder="Escribí acá lo que querés que diga..."
+              maxLength={5000}
+              rows={5}
+              style={{ width: "100%", background: "#111113", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 10, padding: "12px 14px", fontSize: 15, outline: "none", resize: "vertical", lineHeight: 1.6, boxSizing: "border-box", fontFamily: "inherit" }}
+            />
+          </div>
+
+          {/* Generate button */}
+          <button
+            onClick={generar}
+            disabled={loading || !texto.trim()}
+            style={{
+              width: "100%", padding: "14px", borderRadius: 12, border: "none",
+              cursor: loading || !texto.trim() ? "not-allowed" : "pointer",
+              background: loading || !texto.trim()
+                ? "#27272a"
+                : "linear-gradient(135deg, #7c3aed, #c026d3)",
+              color: loading || !texto.trim() ? "#52525b" : "#fff",
+              fontSize: 15, fontWeight: 700,
+              transition: "all 0.2s",
+            }}
           >
-            {voices.map((v) => (
-              <option key={v.id} value={v.id}>{v.name}</option>
-            ))}
-          </select>
+            {loading
+              ? selectedVoice?.cloned
+                ? "Clonando voz... (~30 seg)"
+                : "Generando..."
+              : "Generar Audio"}
+          </button>
+
+          {/* Error */}
+          {error && (
+            <div style={{ marginTop: 14, background: "#1c0a0a", border: "1px solid #7f1d1d", borderRadius: 10, padding: "10px 14px", color: "#fca5a5", fontSize: 13 }}>
+              {error}
+            </div>
+          )}
+
+          {/* Audio player */}
+          {audioUrl && (
+            <div style={{ marginTop: 18, background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a" }}>
+              <div style={{ color: "#a855f7", fontSize: 11, fontWeight: 700, letterSpacing: "0.8px", marginBottom: 10 }}>AUDIO LISTO</div>
+              <audio ref={audioRef} src={audioUrl} controls style={{ width: "100%", borderRadius: 6 }} />
+              <a href={audioUrl} download="lolo_cd.wav" style={{ display: "block", marginTop: 8, textAlign: "center", color: "#52525b", fontSize: 12, textDecoration: "none" }}>
+                Descargar audio
+              </a>
+            </div>
+          )}
         </div>
 
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ display: "block", color: "#a1a1aa", fontSize: 13, marginBottom: 8, fontWeight: 500 }}>
-            TEXTO <span style={{ color: "#52525b" }}>({texto.length}/5000)</span>
-          </label>
-          <textarea
-            value={texto}
-            onChange={(e) => setTexto(e.target.value)}
-            placeholder="Escribí acá lo que querés que diga..."
-            maxLength={5000}
-            rows={6}
-            style={{ width: "100%", background: "#27272a", color: "#fff", border: "1px solid #3f3f46", borderRadius: 10, padding: "12px 14px", fontSize: 15, outline: "none", resize: "vertical", lineHeight: 1.6, boxSizing: "border-box" }}
-          />
-        </div>
-
-        <button
-          onClick={generar}
-          disabled={loading || !texto.trim()}
-          style={{
-            width: "100%", padding: "14px", borderRadius: 12, border: "none", cursor: loading || !texto.trim() ? "not-allowed" : "pointer",
-            background: loading || !texto.trim() ? "#3f3f46" : "linear-gradient(135deg, #7c3aed, #a855f7)",
-            color: "#fff", fontSize: 16, fontWeight: 700, letterSpacing: "0.3px",
-            transition: "all 0.2s", opacity: loading || !texto.trim() ? 0.6 : 1,
-          }}
-        >
-          {loading ? "Generando..." : "Generar Audio"}
-        </button>
-
-        {error && (
-          <div style={{ marginTop: 16, background: "#2d1515", border: "1px solid #7f1d1d", borderRadius: 10, padding: "12px 16px", color: "#fca5a5", fontSize: 14 }}>
-            {error}
-          </div>
-        )}
-
-        {audioUrl && (
-          <div style={{ marginTop: 20, background: "#1c1c20", borderRadius: 12, padding: "16px", border: "1px solid #3f3f46" }}>
-            <div style={{ color: "#a855f7", fontSize: 13, fontWeight: 600, marginBottom: 10 }}>AUDIO GENERADO</div>
-            <audio ref={audioRef} src={audioUrl} controls style={{ width: "100%", borderRadius: 8 }} />
-            <a
-              href={audioUrl}
-              download="lolo_cd_audio.mp3"
-              style={{ display: "block", marginTop: 10, textAlign: "center", color: "#71717a", fontSize: 13, textDecoration: "none" }}
-            >
-              Descargar MP3
-            </a>
-          </div>
-        )}
-
-        <div style={{ marginTop: 28, padding: "14px 16px", background: "#111113", borderRadius: 10, display: "flex", gap: 16, justifyContent: "space-around" }}>
-          {[["CPU", "Servidor"], ["0%", "Celular"], ["$0", "Costo"]].map(([val, label]) => (
-            <div key={label} style={{ textAlign: "center" }}>
-              <div style={{ color: "#a855f7", fontWeight: 800, fontSize: 18 }}>{val}</div>
-              <div style={{ color: "#52525b", fontSize: 11, marginTop: 2 }}>{label}</div>
+        {/* Stats footer */}
+        <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
+          {[["Servidor", "hace la IA"], ["Celular", "solo reproduce"], ["Costo", "$0 siempre"]].map(([val, label]) => (
+            <div key={val} style={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 10, padding: "10px 16px", textAlign: "center", flex: 1 }}>
+              <div style={{ color: "#a855f7", fontWeight: 700, fontSize: 13 }}>{val}</div>
+              <div style={{ color: "#3f3f46", fontSize: 11, marginTop: 2 }}>{label}</div>
             </div>
           ))}
         </div>

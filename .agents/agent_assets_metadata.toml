@@ -324,3 +324,9 @@ id = "AB9GpdhRA21R0URy0TLIV"
 uri = "file://test_motor_lolo_cd.mp3"
 type = "audio"
 title = "Motor Lolo CD - Servidor funcionando"
+
+[[outputs]]
+id = "RB9_d9UoPJhJIUujIjxBJ"
+uri = "file://diever_muñoz_clonado.wav"
+type = "audio"
+title = "Voz clonada de Diever Muñoz — Motor Lolo CD"
