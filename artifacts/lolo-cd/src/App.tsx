@@ -3,26 +3,35 @@ import { useState, useRef, useEffect } from "react";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface Voice { id: string; name: string; cloned: boolean; }
+interface VoicesResp { voices: Voice[]; daemonReady: boolean; }
 
 export default function App() {
-  const [texto, setTexto]       = useState("");
-  const [voiceId, setVoiceId]   = useState("gonzalo-co");
-  const [voices, setVoices]     = useState<Voice[]>([]);
-  const [loading, setLoading]   = useState(false);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [error, setError]       = useState<string | null>(null);
-  const [cacheHit, setCacheHit] = useState<boolean | null>(null);
-  const [calentando, setCalentando] = useState(false);
-  const [frasesPre, setFrasesPre]   = useState("");
+  const [texto, setTexto]           = useState("");
+  const [voiceId, setVoiceId]       = useState("gonzalo-co");
+  const [voices, setVoices]         = useState<Voice[]>([]);
+  const [daemonReady, setDaemonReady] = useState(false);
+  const [loading, setLoading]       = useState(false);
+  const [audioUrl, setAudioUrl]     = useState<string | null>(null);
+  const [error, setError]           = useState<string | null>(null);
+  const [cacheHit, setCacheHit]     = useState<boolean | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const selectedVoice = voices.find((v) => v.id === voiceId);
 
+  // Polling de estado del daemon cada 5 segundos
   useEffect(() => {
-    fetch(`${BASE}/api/tts/voices`)
-      .then((r) => r.json())
-      .then((d) => setVoices(d.voices ?? []))
-      .catch(() => {});
+    function poll() {
+      fetch(`${BASE}/api/tts/voices`)
+        .then((r) => r.json())
+        .then((d: VoicesResp) => {
+          setVoices(d.voices ?? []);
+          setDaemonReady(d.daemonReady ?? false);
+        })
+        .catch(() => {});
+    }
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
   }, []);
 
   async function generar() {
@@ -53,23 +62,8 @@ export default function App() {
     }
   }
 
-  async function precalentar() {
-    const frases = frasesPre.split("\n").map((f) => f.trim()).filter(Boolean);
-    if (!frases.length) return;
-    setCalentando(true);
-    try {
-      await fetch(`${BASE}/api/tts/precalentar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ frases }),
-      });
-      alert(`Precalentando ${frases.length} frase(s) en el servidor. Esperá unos minutos y luego serán instantáneas.`);
-    } catch {
-      alert("Error al iniciar precalentamiento");
-    } finally {
-      setCalentando(false);
-    }
-  }
+  const isDiever   = selectedVoice?.cloned;
+  const canGenerar = !loading && texto.trim().length > 0 && (!isDiever || daemonReady);
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0d", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', sans-serif", padding: "24px" }}>
@@ -78,14 +72,31 @@ export default function App() {
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ fontSize: 40, fontWeight: 900, color: "#fff", letterSpacing: "-1.5px" }}>
-            Motor <span style={{ background: "linear-gradient(135deg, #7c3aed, #c026d3)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Lolo CD</span>
+            Motor{" "}
+            <span style={{ background: "linear-gradient(135deg,#7c3aed,#c026d3)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+              Lolo CD
+            </span>
           </div>
           <div style={{ marginTop: 8, color: "#52525b", fontSize: 13 }}>
             IA de voz en el servidor · Celular solo escucha · Costo $0
           </div>
         </div>
 
-        {/* Card principal */}
+        {/* Estado del daemon Diever */}
+        <div style={{ marginBottom: 16, background: "#18181b", borderRadius: 14, padding: "12px 18px", border: `1px solid ${daemonReady ? "rgba(34,197,94,0.25)" : "rgba(234,179,8,0.25)"}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{
+            width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+            background: daemonReady ? "#22c55e" : "#eab308",
+            boxShadow: daemonReady ? "0 0 6px #22c55e" : "0 0 6px #eab308",
+          }} />
+          <span style={{ fontSize: 12, color: daemonReady ? "#86efac" : "#fde68a" }}>
+            {daemonReady
+              ? "Motor Diever en memoria — voz clonada lista para generar"
+              : "Motor Diever cargando en background... (~20 seg al arrancar)"}
+          </span>
+        </div>
+
+        {/* Card */}
         <div style={{ background: "#18181b", borderRadius: 20, padding: "32px 28px", border: "1px solid #27272a" }}>
 
           {/* Voces */}
@@ -95,9 +106,9 @@ export default function App() {
               {voices.map((v) => (
                 <button key={v.id} onClick={() => setVoiceId(v.id)} style={{
                   padding: "10px 12px", borderRadius: 10,
-                  border:      voiceId === v.id ? "1.5px solid #a855f7" : "1.5px solid #27272a",
-                  background:  voiceId === v.id ? "rgba(168,85,247,0.12)" : "#111113",
-                  color:       voiceId === v.id ? "#d8b4fe" : "#71717a",
+                  border:     voiceId === v.id ? "1.5px solid #a855f7" : "1.5px solid #27272a",
+                  background: voiceId === v.id ? "rgba(168,85,247,0.12)" : "#111113",
+                  color:      voiceId === v.id ? "#d8b4fe" : "#71717a",
                   fontSize: 13, fontWeight: voiceId === v.id ? 600 : 400,
                   cursor: "pointer", textAlign: "left", transition: "all 0.15s",
                   display: "flex", alignItems: "center", gap: 6,
@@ -112,9 +123,11 @@ export default function App() {
               ))}
             </div>
 
-            {selectedVoice?.cloned && (
+            {isDiever && (
               <div style={{ marginTop: 10, background: "rgba(124,58,237,0.08)", border: "1px solid rgba(168,85,247,0.2)", borderRadius: 8, padding: "8px 12px", color: "#a78bfa", fontSize: 12 }}>
-                Primera generación: el servidor clona la voz (~30 seg sin GPU). La misma frase generada antes: <strong>instantáneo desde caché</strong>.
+                {daemonReady
+                  ? "El motor de Diever está en memoria — genera sin reiniciar modelo. Primera vez ~5 seg, caché instantáneo."
+                  : "El motor está cargando. Disponible en unos segundos..."}
               </div>
             )}
           </div>
@@ -131,17 +144,19 @@ export default function App() {
             />
           </div>
 
-          {/* Botón generar */}
-          <button onClick={generar} disabled={loading || !texto.trim()} style={{
+          {/* Botón */}
+          <button onClick={generar} disabled={!canGenerar} style={{
             width: "100%", padding: "14px", borderRadius: 12, border: "none",
-            cursor: loading || !texto.trim() ? "not-allowed" : "pointer",
-            background: loading || !texto.trim() ? "#27272a" : "linear-gradient(135deg, #7c3aed, #c026d3)",
-            color: loading || !texto.trim() ? "#52525b" : "#fff",
+            cursor: canGenerar ? "pointer" : "not-allowed",
+            background: canGenerar ? "linear-gradient(135deg,#7c3aed,#c026d3)" : "#27272a",
+            color: canGenerar ? "#fff" : "#52525b",
             fontSize: 15, fontWeight: 700, transition: "all 0.2s",
           }}>
             {loading
-              ? selectedVoice?.cloned ? "Clonando voz en servidor... (hasta 30 seg)" : "Generando..."
-              : "Generar Audio"}
+              ? isDiever ? "Generando con Diever..." : "Generando..."
+              : isDiever && !daemonReady
+                ? "Esperando que cargue el motor..."
+                : "Generar Audio"}
           </button>
 
           {/* Error */}
@@ -163,7 +178,7 @@ export default function App() {
                     color: cacheHit ? "#86efac" : "#d8b4fe",
                     borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 700,
                   }}>
-                    {cacheHit ? "⚡ CACHÉ" : "🧠 GENERADO"}
+                    {cacheHit ? "⚡ CACHÉ — instantáneo" : "🧠 GENERADO por daemon"}
                   </span>
                 )}
               </div>
@@ -175,34 +190,13 @@ export default function App() {
           )}
         </div>
 
-        {/* Panel precalentamiento Diever */}
-        {voiceId === "diever" && (
-          <div style={{ marginTop: 16, background: "#18181b", borderRadius: 16, padding: "20px 24px", border: "1px solid rgba(168,85,247,0.2)" }}>
-            <div style={{ color: "#a78bfa", fontSize: 12, fontWeight: 700, letterSpacing: "0.8px", marginBottom: 8 }}>
-              ⚡ PRECALENTAR CACHÉ DE DIEVER
-            </div>
-            <div style={{ color: "#52525b", fontSize: 12, marginBottom: 10 }}>
-              Escribí frases que vas a usar seguido (una por línea). El servidor las genera en background y la próxima vez son instantáneas.
-            </div>
-            <textarea
-              value={frasesPre} onChange={(e) => setFrasesPre(e.target.value)}
-              placeholder={"Hola, ¿cómo estás?\nBienvenidos al programa\nHasta la próxima"}
-              rows={4}
-              style={{ width: "100%", background: "#111113", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "10px 12px", fontSize: 13, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "inherit" }}
-            />
-            <button onClick={precalentar} disabled={calentando || !frasesPre.trim()} style={{
-              marginTop: 10, width: "100%", padding: "10px", borderRadius: 10, border: "1px solid rgba(168,85,247,0.4)",
-              background: "rgba(124,58,237,0.1)", color: calentando ? "#52525b" : "#a78bfa",
-              fontSize: 13, fontWeight: 600, cursor: calentando ? "not-allowed" : "pointer",
-            }}>
-              {calentando ? "Mandando al servidor..." : "Precalentar en background"}
-            </button>
-          </div>
-        )}
-
         {/* Stats */}
-        <div style={{ marginTop: 16, display: "flex", gap: 10, justifyContent: "center" }}>
-          {[["~0.5s", "voces edge"], ["caché", "Diever igual"], ["$0", "siempre"]].map(([val, label]) => (
+        <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+          {[
+            ["~0.5s", "voces edge_tts"],
+            ["~5s", "Diever (daemon)"],
+            ["⚡", "caché = 0s"],
+          ].map(([val, label]) => (
             <div key={val} style={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 10, padding: "10px 16px", textAlign: "center", flex: 1 }}>
               <div style={{ color: "#a855f7", fontWeight: 700, fontSize: 13 }}>{val}</div>
               <div style={{ color: "#3f3f46", fontSize: 11, marginTop: 2 }}>{label}</div>
