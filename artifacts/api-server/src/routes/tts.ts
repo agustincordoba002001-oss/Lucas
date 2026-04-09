@@ -90,8 +90,8 @@ function startDaemon() {
   });
 }
 
-// Arrancar daemon al iniciar el servidor
-startDaemon();
+// Daemon XTTS desactivado — Diever ahora usa edge-tts (igual velocidad)
+// startDaemon();
 
 function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -111,7 +111,7 @@ function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
 const VOICES: Record<string, {
   name: string; voice?: string; pitch?: string; rate?: string; cloned?: boolean;
 }> = {
-  "diever":     { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
+  "diever":     { name: "Diever Muñoz ★", voice: "es-CO-GonzaloNeural", pitch: "-5Hz", rate: "+0%" },
   "gonzalo-co": { name: "Gonzalo (Colombia)", voice: "es-CO-GonzaloNeural", pitch: "-2Hz", rate: "-5%" },
   "jorge-mx":   { name: "Jorge (México)",     voice: "es-MX-JorgeNeural",   pitch: "-2Hz", rate: "-5%" },
   "alvaro-es":  { name: "Álvaro (España)",    voice: "es-ES-AlvaroNeural",  pitch: "-2Hz", rate: "-5%" },
