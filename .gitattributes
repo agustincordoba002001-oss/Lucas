@@ -1,0 +1,2 @@
+piper_voices/es_AR-daniela-high.onnx filter=lfs diff=lfs merge=lfs -text
+piper_voices/es_MX-claude-high.onnx filter=lfs diff=lfs merge=lfs -text

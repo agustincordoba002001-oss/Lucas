@@ -158,24 +158,29 @@ startDaemon();
 
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {
-  name: string; voice?: string; pitch?: string; rate?: string; cloned?: boolean;
+  name: string; voice?: string; pitch?: string; rate?: string;
+  cloned?: boolean; piper?: string;
 }> = {
-  "diever":     { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
-  "gonzalo-co": { name: "Gonzalo (Colombia)", voice: "es-CO-GonzaloNeural", pitch: "-2Hz", rate: "-5%" },
-  "jorge-mx":   { name: "Jorge (México)",     voice: "es-MX-JorgeNeural",   pitch: "-2Hz", rate: "-5%" },
-  "alvaro-es":  { name: "Álvaro (España)",    voice: "es-ES-AlvaroNeural",  pitch: "-2Hz", rate: "-5%" },
-  "tomas-ar":   { name: "Tomás (Argentina)",  voice: "es-AR-TomasNeural",   pitch: "-3Hz", rate: "-5%" },
-  "mateo-uy":   { name: "Mateo (Uruguay)",    voice: "es-UY-MateoNeural",   pitch: "-2Hz", rate: "-8%" },
-  "dalia-mx":   { name: "Dalia (México)",     voice: "es-MX-DaliaNeural",   pitch: "+0Hz", rate: "+0%" },
-  "salome-co":  { name: "Salomé (Colombia)",  voice: "es-CO-SalomeNeural",  pitch: "+0Hz", rate: "+0%" },
-  "elvira-es":  { name: "Elvira (España)",    voice: "es-ES-ElviraNeural",  pitch: "+0Hz", rate: "+0%" },
+  "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
+  "claude-mx":   { name: "Claude (México) · Piper",      piper: "claude-mx"  },
+  "daniela-ar":  { name: "Daniela (Argentina) · Piper",  piper: "daniela-ar" },
+  "gonzalo-co":  { name: "Gonzalo (Colombia)", voice: "es-CO-GonzaloNeural", pitch: "-2Hz", rate: "-5%" },
+  "jorge-mx":    { name: "Jorge (México)",     voice: "es-MX-JorgeNeural",   pitch: "-2Hz", rate: "-5%" },
+  "alvaro-es":   { name: "Álvaro (España)",    voice: "es-ES-AlvaroNeural",  pitch: "-2Hz", rate: "-5%" },
+  "tomas-ar":    { name: "Tomás (Argentina)",  voice: "es-AR-TomasNeural",   pitch: "-3Hz", rate: "-5%" },
+  "mateo-uy":    { name: "Mateo (Uruguay)",    voice: "es-UY-MateoNeural",   pitch: "-2Hz", rate: "-8%" },
+  "dalia-mx":    { name: "Dalia (México)",     voice: "es-MX-DaliaNeural",   pitch: "+0Hz", rate: "+0%" },
+  "salome-co":   { name: "Salomé (Colombia)",  voice: "es-CO-SalomeNeural",  pitch: "+0Hz", rate: "+0%" },
+  "elvira-es":   { name: "Elvira (España)",    voice: "es-ES-ElviraNeural",  pitch: "+0Hz", rate: "+0%" },
 };
 
 // ── GET /tts/voices ───────────────────────────────────────────────────────────
 ttsRouter.get("/tts/voices", (_req, res) => {
   res.json({
     voices: Object.entries(VOICES).map(([id, v]) => ({
-      id, name: v.name, cloned: v.cloned ?? false,
+      id, name: v.name,
+      cloned:     v.cloned  ?? false,
+      piper:      !!v.piper,
       daemonReady: v.cloned ? daemonReady : undefined,
     })),
     daemonReady,
@@ -214,6 +219,27 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       res.send(audio);
     } catch (e) {
       res.status(503).json({ error: (e as Error).message });
+    }
+    return;
+  }
+
+  // ── Piper TTS ─────────────────────────────────────────────────────────────
+  if (voz.piper) {
+    try {
+      const upstream = await fetch(`${TTS_SERVICE}/piper`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ texto: text, voice: voz.piper }),
+      });
+      if (!upstream.ok) {
+        const err = await upstream.json().catch(() => ({ error: "Error Piper" }));
+        res.status(upstream.status).json(err); return;
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", "audio/wav");
+      res.send(buf);
+    } catch (e) {
+      res.status(503).json({ error: `Error Piper: ${(e as Error).message}` });
     }
     return;
   }

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface Voice { id: string; name: string; cloned: boolean; }
+interface Voice { id: string; name: string; cloned: boolean; piper: boolean; }
 interface VoicesResp { voices: Voice[]; daemonReady: boolean; }
 
 export default function App() {
@@ -104,6 +104,11 @@ export default function App() {
                       CLONADA
                     </span>
                   )}
+                  {v.piper && (
+                    <span style={{ background: "linear-gradient(135deg,#0ea5e9,#6366f1)", borderRadius: 4, padding: "1px 5px", fontSize: 9, fontWeight: 700, color: "#fff", flexShrink: 0 }}>
+                      PIPER
+                    </span>
+                  )}
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</span>
                 </button>
               ))}
@@ -166,7 +171,8 @@ export default function App() {
 
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
           {[
-            ["~0.5s", "voces edge_tts"],
+            ["⚡ ~0.1s", "Piper local"],
+            ["~0.5s", "edge_tts"],
             ["~3s", "Diever (1ª vez)"],
             ["⚡ 0s", "Diever (caché)"],
           ].map(([val, label]) => (
