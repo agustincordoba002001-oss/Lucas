@@ -10,8 +10,8 @@ const TTS_SERVICE   = "http://127.0.0.1:5000";
 const DIEVER_REF    = "/home/runner/workspace/diever_referencia.wav";
 const DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
 
-// ── Caché en disco ────────────────────────────────────────────────────────────
-const CACHE_DIR = "/tmp/tts_cache";
+// ── Caché en disco persistente (sobrevive reinicios) ──────────────────────────
+const CACHE_DIR = "/home/runner/workspace/tts_cache";
 mkdirSync(CACHE_DIR, { recursive: true });
 
 function cacheKey(texto: string, voiceId: string) {
@@ -27,6 +27,9 @@ function cacheSet(key: string, data: Buffer) {
 
 // ── Frases pre-calentadas para Diever ─────────────────────────────────────────
 const WARMUP_PHRASES = [
+  "Hola.",
+  "Hola, ¿cómo están?",
+  "Buenas.",
   "Bienvenidos a Motor Lolo CD.",
   "Estás escuchando Motor Lolo CD, la mejor música para tu viaje.",
   "Seguimos con más música en Motor Lolo CD.",
