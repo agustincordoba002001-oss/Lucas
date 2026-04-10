@@ -25,12 +25,43 @@ function cacheSet(key: string, data: Buffer) {
   writeFileSync(join(CACHE_DIR, `${key}.wav`), data);
 }
 
+// ── Frases pre-calentadas para Diever ─────────────────────────────────────────
+const WARMUP_PHRASES = [
+  "Bienvenidos a Motor Lolo CD.",
+  "Estás escuchando Motor Lolo CD, la mejor música para tu viaje.",
+  "Seguimos con más música en Motor Lolo CD.",
+  "Muchas gracias por escucharnos.",
+  "Y ahora sí, con todo.",
+  "Eso es todo por hoy, hasta la próxima.",
+  "Buenas noches a todos nuestros oyentes.",
+  "Buenos días Colombia, arriba ese ánimo.",
+  "Una canción especial para todos ustedes.",
+  "Motor Lolo CD, siempre contigo.",
+];
+
 // ── XTTS Daemon ───────────────────────────────────────────────────────────────
 let daemon: ChildProcess | null = null;
 let daemonReady                 = false;
 let daemonBuf                   = Buffer.alloc(0);
-type PendingReq = { resolve: (b: Buffer) => void; reject: (e: Error) => void };
-let pendingReq: PendingReq | null = null;
+let warmupDone                  = false;
+
+type QueueItem = {
+  texto: string;
+  refAudio: string;
+  resolve: (b: Buffer) => void;
+  reject:  (e: Error)  => void;
+};
+
+const requestQueue: QueueItem[] = [];
+let activePendingReq: { resolve: (b: Buffer) => void; reject: (e: Error) => void } | null = null;
+
+function processNextInQueue() {
+  if (activePendingReq || !daemonReady || !daemon) return;
+  const next = requestQueue.shift();
+  if (!next) return;
+  activePendingReq = { resolve: next.resolve, reject: next.reject };
+  daemon!.stdin!.write(JSON.stringify({ texto: next.texto, ref_audio: next.refAudio }) + "\n");
+}
 
 function startDaemon() {
   console.log("[TTS] Iniciando daemon XTTS...");
@@ -46,7 +77,15 @@ function startDaemon() {
       if (nl !== -1) {
         const msg = daemonBuf.slice(0, nl).toString().trim();
         daemonBuf = daemonBuf.slice(nl + 1);
-        if (msg === "READY") { daemonReady = true; console.log("[TTS] Daemon XTTS listo ✓"); }
+        if (msg === "READY") {
+          daemonReady = true;
+          console.log("[TTS] Daemon XTTS listo ✓");
+          if (!warmupDone) {
+            warmupDone = true;
+            scheduleWarmup();
+          }
+          processNextInQueue();
+        }
       }
       return;
     }
@@ -60,34 +99,62 @@ function startDaemon() {
         if (daemonBuf.length < 8 + msgLen) break;
         const errMsg = daemonBuf.slice(8, 8 + msgLen).toString();
         daemonBuf = daemonBuf.slice(8 + msgLen);
-        if (pendingReq) { pendingReq.reject(new Error(errMsg)); pendingReq = null; }
+        if (activePendingReq) { activePendingReq.reject(new Error(errMsg)); activePendingReq = null; }
       } else {
         if (daemonBuf.length < 4 + len) break;
         const audio = Buffer.from(daemonBuf.slice(4, 4 + len));
         daemonBuf = daemonBuf.slice(4 + len);
-        if (pendingReq) { pendingReq.resolve(audio); pendingReq = null; }
+        if (activePendingReq) { activePendingReq.resolve(audio); activePendingReq = null; }
       }
+      processNextInQueue();
     }
   });
 
   daemon.on("close", (code) => {
     console.log(`[TTS] Daemon terminó (code ${code}), reiniciando en 3s...`);
     daemonReady = false; daemon = null;
-    if (pendingReq) { pendingReq.reject(new Error("Daemon reiniciando")); pendingReq = null; }
+    if (activePendingReq) {
+      activePendingReq.reject(new Error("Daemon reiniciando"));
+      activePendingReq = null;
+    }
+    for (const item of requestQueue.splice(0)) {
+      item.reject(new Error("Daemon reiniciando"));
+    }
     setTimeout(startDaemon, 3000);
   });
 }
 
-startDaemon();
-
 function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    if (!daemon || !daemonReady) return reject(new Error("Daemon no disponible aún, intentá en unos segundos"));
-    if (pendingReq) return reject(new Error("Daemon ocupado, intentá en unos segundos"));
-    pendingReq = { resolve, reject };
-    daemon!.stdin!.write(JSON.stringify({ texto, ref_audio: refAudio }) + "\n");
+    if (!daemon || !daemonReady) {
+      return reject(new Error("Daemon no disponible aún, intentá en unos segundos"));
+    }
+    requestQueue.push({ texto, refAudio, resolve, reject });
+    processNextInQueue();
   });
 }
+
+function scheduleWarmup() {
+  (async () => {
+    console.log("[TTS] Precalentando caché Diever en background...");
+    let hit = 0, miss = 0;
+    for (const frase of WARMUP_PHRASES) {
+      const key = cacheKey(frase, "diever");
+      if (cacheGet(key)) { hit++; continue; }
+      try {
+        const audio = await askDaemon(frase, DIEVER_REF);
+        cacheSet(key, audio);
+        miss++;
+        console.log(`[TTS] Warmup: "${frase.slice(0, 45)}"`);
+      } catch {
+        // ignorar errores de warmup
+      }
+    }
+    console.log(`[TTS] Warmup completo — ${hit} en caché, ${miss} generados.`);
+  })().catch(console.error);
+}
+
+startDaemon();
 
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {
