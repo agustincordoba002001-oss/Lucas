@@ -16,6 +16,8 @@ _piper = {}
 _PIPER_MODELS = {
     "claude-mx":   "/home/runner/workspace/piper_voices/es_MX-claude-high.onnx",
     "daniela-ar":  "/home/runner/workspace/piper_voices/es_AR-daniela-high.onnx",
+    "carlfm-es":   "/home/runner/workspace/piper_voices/es_ES-carlfm-x_low.onnx",
+    "davefx-es":   "/home/runner/workspace/piper_voices/es_ES-davefx-medium.onnx",
 }
 
 try:

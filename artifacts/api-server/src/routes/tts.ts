@@ -25,9 +25,28 @@ function cacheSet(key: string, data: Buffer) {
   writeFileSync(join(CACHE_DIR, `${key}.wav`), data);
 }
 
+function instantClonedText(texto: string) {
+  const normalized = texto
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[¡!¿?.,\s]+$/g, "");
+
+  if (normalized === "hola") return "Hola.";
+  if (
+    normalized === "hola a la velocidad de la luz" ||
+    normalized === "hola a la veloxidad de la luz"
+  ) {
+    return "Hola a la velocidad de la luz.";
+  }
+  return null;
+}
+
 // ── Frases pre-calentadas para Diever ─────────────────────────────────────────
 const WARMUP_PHRASES = [
   "Hola.",
+  "Hola a la velocidad de la luz.",
   "Hola, ¿cómo están?",
   "Buenas.",
   "Bienvenidos a Motor Lolo CD.",
@@ -139,18 +158,20 @@ function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
 
 function scheduleWarmup() {
   (async () => {
-    console.log("[TTS] Precalentando caché Diever en background...");
+    console.log("[TTS] Precalentando caché Darwin/Diever en background...");
     let hit = 0, miss = 0;
-    for (const frase of WARMUP_PHRASES) {
-      const key = cacheKey(frase, "diever");
-      if (cacheGet(key)) { hit++; continue; }
-      try {
-        const audio = await askDaemon(frase, DIEVER_REF);
-        cacheSet(key, audio);
-        miss++;
-        console.log(`[TTS] Warmup: "${frase.slice(0, 45)}"`);
-      } catch {
-        // ignorar errores de warmup
+    for (const voiceId of ["darwin", "diever"]) {
+      for (const frase of WARMUP_PHRASES) {
+        const key = cacheKey(frase, voiceId);
+        if (cacheGet(key)) { hit++; continue; }
+        try {
+          const audio = await askDaemon(frase, DIEVER_REF);
+          cacheSet(key, audio);
+          miss++;
+          console.log(`[TTS] Warmup ${voiceId}: "${frase.slice(0, 45)}"`);
+        } catch {
+          // ignorar errores de warmup
+        }
       }
     }
     console.log(`[TTS] Warmup completo — ${hit} en caché, ${miss} generados.`);
@@ -164,9 +185,12 @@ const VOICES: Record<string, {
   name: string; voice?: string; pitch?: string; rate?: string;
   cloned?: boolean; piper?: string;
 }> = {
+  "darwin":      { name: "Darwin ★ (voz clonada)",       cloned: true },
   "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
   "claude-mx":   { name: "Claude (México) · Piper",      piper: "claude-mx"  },
   "daniela-ar":  { name: "Daniela (Argentina) · Piper",  piper: "daniela-ar" },
+  "carlfm-es":   { name: "CarlFM (España) · Piper",      piper: "carlfm-es"  },
+  "davefx-es":   { name: "DaveFX (España) · Piper",      piper: "davefx-es"  },
   "gonzalo-co":  { name: "Gonzalo (Colombia)", voice: "es-CO-GonzaloNeural", pitch: "-2Hz", rate: "-5%" },
   "jorge-mx":    { name: "Jorge (México)",     voice: "es-MX-JorgeNeural",   pitch: "-2Hz", rate: "-5%" },
   "alvaro-es":   { name: "Álvaro (España)",    voice: "es-ES-AlvaroNeural",  pitch: "-2Hz", rate: "-5%" },
@@ -206,7 +230,8 @@ ttsRouter.post("/tts/generate", async (req, res) => {
 
   // ── Diever ────────────────────────────────────────────────────────────────
   if (voz.cloned) {
-    const key    = cacheKey(text, voiceId);
+    const cachedText = instantClonedText(text) ?? text;
+    const key    = cacheKey(cachedText, voiceId);
     const cached = cacheGet(key);
     if (cached) {
       res.setHeader("Content-Type", "audio/wav");

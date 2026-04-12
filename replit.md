@@ -25,3 +25,10 @@ pnpm workspace monorepo using TypeScript. Each package manages its own dependenc
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+
+## Voice/TTS Notes
+
+- Local voice service combines Edge TTS, Piper, and XTTS cloned voice generation.
+- Piper voices currently registered: Claude MX, Daniela AR, CarlFM ES, and DaveFX ES.
+- The cloned voice is exposed as Darwin, with Diever kept as a backwards-compatible alias.
+- Darwin's “Hola.” is normalized and served from persistent disk cache so it stays instant across server restarts.

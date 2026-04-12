@@ -17,7 +17,17 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   const selectedVoice = voices.find((v) => v.id === voiceId);
-  const isDiever = selectedVoice?.cloned ?? false;
+  const isCloned = selectedVoice?.cloned ?? false;
+  const normalizedText = texto
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[¡!¿?.,\s]+$/g, "");
+  const isInstantDarwinPhrase =
+    normalizedText === "hola" ||
+    normalizedText === "hola a la velocidad de la luz" ||
+    normalizedText === "hola a la veloxidad de la luz";
 
   useEffect(() => {
     function poll() {
@@ -59,7 +69,7 @@ export default function App() {
     }
   }
 
-  const canGenerar = !loading && texto.trim().length > 0 && (!isDiever || daemonReady);
+  const canGenerar = !loading && texto.trim().length > 0;
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0d", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Inter', sans-serif", padding: "24px" }}>
@@ -80,7 +90,7 @@ export default function App() {
         <div style={{ marginBottom: 16, background: "#18181b", borderRadius: 14, padding: "12px 18px", border: `1px solid ${daemonReady ? "rgba(34,197,94,0.25)" : "rgba(234,179,8,0.25)"}`, display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: daemonReady ? "#22c55e" : "#eab308", boxShadow: daemonReady ? "0 0 6px #22c55e" : "0 0 6px #eab308" }} />
           <span style={{ fontSize: 12, color: daemonReady ? "#86efac" : "#fde68a" }}>
-            {daemonReady ? "Motor Diever en memoria — listo para generar" : "Motor Diever cargando... (~20 seg al arrancar)"}
+            {daemonReady ? "Motor Darwin en memoria — listo para generar" : "Motor Darwin cargando... “hola” sale instantáneo desde caché"}
           </span>
         </div>
 
@@ -134,9 +144,9 @@ export default function App() {
             fontSize: 15, fontWeight: 700, transition: "all 0.2s",
           }}>
             {loading
-              ? isDiever ? "Generando con Diever (~3 seg)..." : "Generando..."
-              : isDiever && !daemonReady
-                ? "Esperando motor..."
+              ? isCloned ? "Generando con Darwin (~3 seg)..." : "Generando..."
+              : isCloned && !daemonReady && !isInstantDarwinPhrase
+                ? "Probar caché Darwin"
                 : "Generar Audio"}
           </button>
 
@@ -162,7 +172,7 @@ export default function App() {
                 )}
               </div>
               <audio ref={audioRef} src={audioUrl} controls style={{ width: "100%", borderRadius: 6 }} />
-              <a href={audioUrl} download="diever.wav" style={{ display: "block", marginTop: 8, textAlign: "center", color: "#52525b", fontSize: 12, textDecoration: "none" }}>
+              <a href={audioUrl} download="darwin.wav" style={{ display: "block", marginTop: 8, textAlign: "center", color: "#52525b", fontSize: 12, textDecoration: "none" }}>
                 Descargar audio
               </a>
             </div>
@@ -173,8 +183,8 @@ export default function App() {
           {[
             ["⚡ ~0.1s", "Piper local"],
             ["~0.5s", "edge_tts"],
-            ["~3s", "Diever (1ª vez)"],
-            ["⚡ 0s", "Diever (caché)"],
+            ["~3s", "Darwin (1ª vez)"],
+            ["⚡ 0s", "Darwin (caché)"],
           ].map(([val, label]) => (
             <div key={label} style={{ background: "#18181b", border: "1px solid #27272a", borderRadius: 10, padding: "10px 16px", textAlign: "center", flex: 1 }}>
               <div style={{ color: "#a855f7", fontWeight: 700, fontSize: 13 }}>{val}</div>
