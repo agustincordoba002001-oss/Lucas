@@ -8,6 +8,7 @@ const ttsRouter = Router();
 
 const TTS_SERVICE   = "http://127.0.0.1:5000";
 const DIEVER_REF    = "/home/runner/workspace/diever_referencia.wav";
+const NEXUS_REF     = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
 const DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
 
 // ── Caché en disco persistente (sobrevive reinicios) ──────────────────────────
@@ -158,14 +159,19 @@ function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
 
 function scheduleWarmup() {
   (async () => {
-    console.log("[TTS] Precalentando caché Darwin/Diever en background...");
+    console.log("[TTS] Precalentando caché Darwin/Diever/Nexus en background...");
     let hit = 0, miss = 0;
-    for (const voiceId of ["darwin", "diever"]) {
+    const clonedWarmups = [
+      ["darwin", DIEVER_REF],
+      ["diever", DIEVER_REF],
+      ["nexus", NEXUS_REF],
+    ] as const;
+    for (const [voiceId, refAudio] of clonedWarmups) {
       for (const frase of WARMUP_PHRASES) {
         const key = cacheKey(frase, voiceId);
         if (cacheGet(key)) { hit++; continue; }
         try {
-          const audio = await askDaemon(frase, DIEVER_REF);
+          const audio = await askDaemon(frase, refAudio);
           cacheSet(key, audio);
           miss++;
           console.log(`[TTS] Warmup ${voiceId}: "${frase.slice(0, 45)}"`);
@@ -183,10 +189,11 @@ startDaemon();
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {
   name: string; voice?: string; pitch?: string; rate?: string;
-  cloned?: boolean; piper?: string;
+  cloned?: boolean; piper?: string; refAudio?: string;
 }> = {
   "darwin":      { name: "Darwin ★ (voz clonada)",       cloned: true },
   "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
+  "nexus":       { name: "Nexus Offline ★ (voz subida)", cloned: true, refAudio: NEXUS_REF },
   "claude-mx":   { name: "Claude (México) · Piper",      piper: "claude-mx"  },
   "daniela-ar":  { name: "Daniela (Argentina) · Piper",  piper: "daniela-ar" },
   "carlfm-es":   { name: "CarlFM (España) · Piper",      piper: "carlfm-es"  },
@@ -240,7 +247,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       return;
     }
     try {
-      const audio = await askDaemon(text, DIEVER_REF);
+      const audio = await askDaemon(text, voz.refAudio ?? DIEVER_REF);
       cacheSet(key, audio);
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("X-Cache", "MISS");

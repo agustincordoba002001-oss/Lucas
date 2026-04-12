@@ -18,6 +18,7 @@ export default function App() {
 
   const selectedVoice = voices.find((v) => v.id === voiceId);
   const isCloned = selectedVoice?.cloned ?? false;
+  const clonedVoiceLabel = selectedVoice?.name.split("★")[0].trim() || "voz clonada";
   const normalizedText = texto
     .trim()
     .toLowerCase()
@@ -90,7 +91,7 @@ export default function App() {
         <div style={{ marginBottom: 16, background: "#18181b", borderRadius: 14, padding: "12px 18px", border: `1px solid ${daemonReady ? "rgba(34,197,94,0.25)" : "rgba(234,179,8,0.25)"}`, display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: daemonReady ? "#22c55e" : "#eab308", boxShadow: daemonReady ? "0 0 6px #22c55e" : "0 0 6px #eab308" }} />
           <span style={{ fontSize: 12, color: daemonReady ? "#86efac" : "#fde68a" }}>
-            {daemonReady ? "Motor Darwin en memoria — listo para generar" : "Motor Darwin cargando... “hola” sale instantáneo desde caché"}
+            {daemonReady ? `Motor ${clonedVoiceLabel} en memoria — listo para generar` : "Motor de voz clonada cargando... las frases cacheadas salen instantáneas"}
           </span>
         </div>
 
