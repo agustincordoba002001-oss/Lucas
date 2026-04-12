@@ -31,5 +31,6 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - Local voice service combines Edge TTS, Piper, and XTTS cloned voice generation.
 - Piper voices currently registered: Claude MX, Daniela AR, CarlFM ES, and DaveFX ES.
 - The cloned voice is exposed as Darwin, with Diever kept as a backwards-compatible alias.
-- The uploaded `NEXUS_VOZ_OFFLINE_1776028665996.onnx` asset is actually WAV audio data and is used as a cloned reference voice named Nexus Offline, not as a Piper model.
+- The uploaded `NEXUS_VOZ_OFFLINE_1776028665996.onnx` asset is actually WAV audio data and is used as a cloned reference voice named Nexus Offline Juan, not as a Piper model.
+- `NEXUS_OFFLINE.onnx_1776029964832.json` contains reference metadata for the Nexus/Juan upload, but it still is not enough to load as a Piper model without a valid Piper ONNX and phoneme map.
 - Darwin's “Hola.” is normalized and served from persistent disk cache so it stays instant across server restarts.

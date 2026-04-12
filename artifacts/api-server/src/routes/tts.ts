@@ -9,6 +9,7 @@ const ttsRouter = Router();
 const TTS_SERVICE   = "http://127.0.0.1:5000";
 const DIEVER_REF    = "/home/runner/workspace/diever_referencia.wav";
 const NEXUS_REF     = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
+const NEXUS_CONFIG  = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
 const DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
 
 // ── Caché en disco persistente (sobrevive reinicios) ──────────────────────────
@@ -193,7 +194,7 @@ const VOICES: Record<string, {
 }> = {
   "darwin":      { name: "Darwin ★ (voz clonada)",       cloned: true },
   "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
-  "nexus":       { name: "Nexus Offline ★ (voz subida)", cloned: true, refAudio: NEXUS_REF },
+  "nexus":       { name: "Nexus Offline Juan ★ (voz subida)", cloned: true, refAudio: NEXUS_REF },
   "claude-mx":   { name: "Claude (México) · Piper",      piper: "claude-mx"  },
   "daniela-ar":  { name: "Daniela (Argentina) · Piper",  piper: "daniela-ar" },
   "carlfm-es":   { name: "CarlFM (España) · Piper",      piper: "carlfm-es"  },

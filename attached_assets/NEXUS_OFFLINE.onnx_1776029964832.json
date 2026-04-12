@@ -1,0 +1,1 @@
+{"audio": {"sample_rate": 22050}, "espeak": {"voice": "es-es"}, "inference": {"noise_scale": 0.667, "length_scale": 1.0}, "num_speakers": 1, "speaker_id_map": {"juan": 0}}
