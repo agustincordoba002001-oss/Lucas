@@ -34,4 +34,5 @@ See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and pa
 - The uploaded `NEXUS_VOZ_OFFLINE_1776028665996.onnx` asset is actually WAV audio data and is used as a cloned reference voice named Nexus Offline Juan, not as a Piper model.
 - `NEXUS_OFFLINE.onnx_1776029964832.json` contains reference metadata for the Nexus/Juan upload, but it still is not enough to load as a Piper model without a valid Piper ONNX and phoneme map.
 - `NEXUS_ULTRA_FAST_1776036107434.onnx` is not a valid ONNX protobuf for Piper/ONNX Runtime. The app exposes `Nexus Ultra Fast` as a local cache mode backed by the working Nexus reference audio and `NEXUS_ULTRA_FAST_1776036098561.json` metadata.
+- `Nexus Piper Patch` uses the local Piper DaveFX model as a fast base, then applies a lightweight pitch/timbre patch from the Nexus/Juan reference audio. Generated patch outputs are cached in `tts_cache`.
 - Darwin's “Hola.” is normalized and served from persistent disk cache so it stays instant across server restarts.

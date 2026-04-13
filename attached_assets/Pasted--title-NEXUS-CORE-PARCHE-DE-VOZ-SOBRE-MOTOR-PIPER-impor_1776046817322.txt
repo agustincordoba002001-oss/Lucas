@@ -1,0 +1,64 @@
+# @title 🌀 NEXUS-CORE: PARCHE DE VOZ SOBRE MOTOR PIPER
+import os
+import random
+import librosa
+import numpy as np
+import soundfile as sf
+import IPython.display as ipd
+from google.colab import files
+
+# 1. CARGA DE MOTOR Y ADN
+if not os.path.exists("piper"):
+    print("⏳ Instalando motor Piper (El motor de lectura)...")
+    !wget -q https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_amd64.tar.gz
+    !tar -xf piper_amd64.tar.gz
+    !wget -q -O model.onnx https://github.com/rhasspy/piper/releases/download/v1.0.0/es_ES-dario-medium.onnx
+    !wget -q -O model.onnx.json https://github.com/rhasspy/piper/releases/download/v1.0.0/es_ES-dario-medium.onnx.json
+
+print("📥 SUBÍ TU AUDIO DE REFERENCIA (Tu voz para el parche):")
+uploaded = files.upload()
+if not uploaded:
+    print("❌ No subiste nada. Necesito tu voz para parchear a Piper.")
+else:
+    nombre_tu_voz = list(uploaded.keys())[0]
+
+    # @markdown ### ✍️ Mensaje para que Piper lea con TU voz:
+    texto_nexus = "Hola Juan, este es el motor de lectura de Piper, pero con el parche de mi propia voz arriba. Ahora suena como yo, pero con la inteligencia de Piper." # @param {type:"string"}
+
+    def parchear_piper_con_adn(txt, ref_path):
+        print("🧬 Piper está leyendo el texto...")
+        # Generamos el audio base con Piper (Voz de Dario como molde)
+        !echo "{txt}" | ./piper/piper --model model.onnx --output_file piper_raw.wav
+        
+        # 2. PROCESO DE "PARCHEO" (Voice Conversion)
+        print("🛠️ Aplicando parche de identidad vocal...")
+        y_piper, sr = librosa.load("piper_raw.wav", sr=22050)
+        y_adn, _ = librosa.load(ref_path, sr=sr)
+        
+        # Extraemos el tono medio de tu voz
+        f0_adn, _, _ = librosa.pyin(y_adn, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
+        target_pitch = np.nanmedian(f0_adn)
+        
+        # Extraemos el tono de Piper (Dario)
+        f0_piper, _, _ = librosa.pyin(y_piper, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
+        source_pitch = np.nanmedian(f0_piper)
+        
+        # Calculamos la diferencia para que Piper hable en TU frecuencia
+        steps = librosa.hz_to_midi(target_pitch) - librosa.hz_to_midi(source_pitch)
+        
+        # Transformación: Piper ahora tiene tu tono
+        y_parcheado = librosa.effects.pitch_shift(y_piper, sr=sr, n_steps=steps)
+        
+        # Aplicamos tu 'brillo' (Timbre)
+        y_final = librosa.effects.preemphasis(y_parcheado, coef=0.97)
+        
+        # 3. RESULTADO FINAL
+        output_file = "NEXUS_PIPER_PARCHEADO.wav"
+        sf.write(output_file, y_final, sr)
+        
+        print(f"✅ ¡LOGRADO! Piper con parche de {nombre_tu_voz}:")
+        ipd.display(ipd.Audio(output_file, autoplay=True))
+        files.download(output_file)
+
+    # Ejecutar motor
+    parchear_piper_con_adn(texto_nexus, nombre_tu_voz)

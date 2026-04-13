@@ -12,6 +12,7 @@ const NEXUS_REF     = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_
 const NEXUS_CONFIG  = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
 const NEXUS_ULTRA_REF = NEXUS_REF;
 const NEXUS_ULTRA_CONFIG = "/home/runner/workspace/attached_assets/NEXUS_ULTRA_FAST_1776036098561.json";
+const NEXUS_PIPER_PATCH = "nexus-piper-patch";
 const DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
 
 // ── Caché en disco persistente (sobrevive reinicios) ──────────────────────────
@@ -193,12 +194,13 @@ startDaemon();
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {
   name: string; voice?: string; pitch?: string; rate?: string;
-  cloned?: boolean; piper?: string; refAudio?: string; config?: string;
+  cloned?: boolean; piper?: string; piperPatch?: string; refAudio?: string; config?: string;
 }> = {
   "darwin":      { name: "Darwin ★ (voz clonada)",       cloned: true },
   "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
   "nexus":       { name: "Nexus Offline Juan ★ (voz subida)", cloned: true, refAudio: NEXUS_REF, config: NEXUS_CONFIG },
   "nexus-ultra": { name: "Nexus Ultra Fast ★ (caché local)", cloned: true, refAudio: NEXUS_ULTRA_REF, config: NEXUS_ULTRA_CONFIG },
+  "nexus-piper-patch": { name: "Nexus Piper Patch ★ (Piper + ADN)", piperPatch: NEXUS_PIPER_PATCH },
   "claude-mx":   { name: "Claude (México) · Piper",      piper: "claude-mx"  },
   "daniela-ar":  { name: "Daniela (Argentina) · Piper",  piper: "daniela-ar" },
   "carlfm-es":   { name: "CarlFM (España) · Piper",      piper: "carlfm-es"  },
@@ -219,7 +221,7 @@ ttsRouter.get("/tts/voices", (_req, res) => {
     voices: Object.entries(VOICES).map(([id, v]) => ({
       id, name: v.name,
       cloned:     v.cloned  ?? false,
-      piper:      !!v.piper,
+      piper:      !!(v.piper || v.piperPatch),
       daemonReady: v.cloned ? daemonReady : undefined,
     })),
     daemonReady,
@@ -259,6 +261,36 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       res.send(audio);
     } catch (e) {
       res.status(503).json({ error: (e as Error).message });
+    }
+    return;
+  }
+
+  if (voz.piperPatch) {
+    const key = cacheKey(text, voiceId);
+    const cached = cacheGet(key);
+    if (cached) {
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-Cache", "HIT");
+      res.send(cached);
+      return;
+    }
+    try {
+      const upstream = await fetch(`${TTS_SERVICE}/piper-patch`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ texto: text, voice: voz.piperPatch }),
+      });
+      if (!upstream.ok) {
+        const err = await upstream.json().catch(() => ({ error: "Error Piper Patch" }));
+        res.status(upstream.status).json(err); return;
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      cacheSet(key, buf);
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-Cache", "MISS");
+      res.send(buf);
+    } catch (e) {
+      res.status(503).json({ error: `Error Piper Patch: ${(e as Error).message}` });
     }
     return;
   }
