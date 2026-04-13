@@ -25,6 +25,13 @@ _PIPER_MODELS = {
 
 # mode "pitch"  → solo ajuste de tono (librosa, rápido)
 # mode "world"  → conversión completa pitch + timbre (WORLD vocoder)
+# "refs" acepta lista de WAVs para promediar el modelo espectral (más preciso)
+_DARWIN_REFS = [
+    "/home/runner/workspace/diever_2_minutos.wav",      # 128s — fuente principal
+    "/home/runner/workspace/diever_referencia.wav",     # 20s
+    "/home/runner/workspace/voz_clonada_diever.wav",    # 9.5s
+    "/home/runner/workspace/diever_muñoz_clonado.wav",  # 5.9s
+]
 _PATCHED_VOICES = {
     "nexus-piper-patch": {
         "base": "davefx-es",
@@ -38,7 +45,7 @@ _PATCHED_VOICES = {
     },
     "darwin-piper-patch": {
         "base": "davefx-es",
-        "ref":  "/home/runner/workspace/attached_assets/clon_lolo_directo_(6)_1776048168673.wav",
+        "refs": _DARWIN_REFS,          # modelo multi-archivo promediado
         "mode": "world",
     },
 }
@@ -61,35 +68,85 @@ except ImportError:
 # ── Pre-cómputo de features WORLD para cada referencia ───────────────────────
 WORLD_SR = 16000
 
+def _load_world_features_single(path: str, max_dur: float = 30.0) -> dict | None:
+    """Extrae F0 y envolvente espectral de un solo archivo WAV."""
+    if not os.path.exists(path):
+        return None
+    y, _ = librosa.load(path, sr=WORLD_SR, duration=max_dur)
+    y = y.astype(np.float64)
+    if len(y) < WORLD_SR * 0.5:
+        return None
+    f0, t = pw.dio(y, WORLD_SR)
+    f0    = pw.stonemask(y, f0, t, WORLD_SR)
+    sp    = pw.cheaptrick(y, f0, t, WORLD_SR)
+    voiced = f0 > 0
+    return {
+        "f0_values":   f0[voiced].tolist(),
+        "mean_log_sp": np.mean(np.log(sp + 1e-10), axis=0),
+        "n_frames":    int(sp.shape[0]),
+    }
+
 def _load_world_features(ref_path: str) -> dict:
-    """Extrae F0 mediana y envolvente espectral media del audio de referencia."""
+    """Versión de un solo archivo (compatible hacia atrás)."""
     if ref_path in _world_cache:
         return _world_cache[ref_path]
-
     print(f"[TTS-SERVICE] Analizando referencia WORLD: {ref_path}", flush=True)
-    y, _ = librosa.load(ref_path, sr=WORLD_SR, duration=10.0)
-    y = y.astype(np.float64)
-
-    f0, t   = pw.dio(y, WORLD_SR)
-    f0      = pw.stonemask(y, f0, t, WORLD_SR)
-    sp      = pw.cheaptrick(y, f0, t, WORLD_SR)
-
-    voiced      = f0 > 0
-    f0_median   = float(np.median(f0[voiced])) if voiced.any() else 150.0
-    mean_log_sp = np.mean(np.log(sp + 1e-10), axis=0)
-
-    feats = {"f0_median": f0_median, "mean_log_sp": mean_log_sp}
+    r = _load_world_features_single(ref_path)
+    if r is None:
+        return {"f0_median": 150.0, "mean_log_sp": np.zeros(513)}
+    f0_median   = float(np.median(r["f0_values"])) if r["f0_values"] else 150.0
+    feats = {"f0_median": f0_median, "mean_log_sp": r["mean_log_sp"]}
     _world_cache[ref_path] = feats
     print(f"[TTS-SERVICE] WORLD listo — f0_median={f0_median:.1f} Hz", flush=True)
     return feats
 
+def _load_world_features_multi(paths: list, cache_key: str) -> dict:
+    """
+    Entrena el modelo espectral promediando múltiples archivos de referencia.
+    Cuantos más archivos, más estable y representativa la envolvente espectral.
+    """
+    if cache_key in _world_cache:
+        return _world_cache[cache_key]
+
+    all_f0, all_log_sp, total_frames = [], [], 0
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        print(f"[TTS-SERVICE] Analizando para modelo Darwin: {os.path.basename(p)}", flush=True)
+        r = _load_world_features_single(p, max_dur=60.0)
+        if r is None:
+            continue
+        all_f0.extend(r["f0_values"])
+        # Promedio ponderado por número de frames
+        w = r["n_frames"]
+        all_log_sp.append((r["mean_log_sp"], w))
+        total_frames += w
+
+    if not all_f0:
+        feats = {"f0_median": 150.0, "mean_log_sp": np.zeros(513)}
+    else:
+        f0_median = float(np.median(all_f0))
+        if total_frames > 0:
+            mean_log_sp = sum(sp * w for sp, w in all_log_sp) / total_frames
+        else:
+            mean_log_sp = all_log_sp[0][0]
+        feats = {"f0_median": f0_median, "mean_log_sp": mean_log_sp}
+        print(f"[TTS-SERVICE] Modelo Darwin listo — f0_median={f0_median:.1f} Hz  frames_totales={total_frames}", flush=True)
+
+    _world_cache[cache_key] = feats
+    return feats
+
 # Pre-computar todas las referencias WORLD al arrancar
-for _vcfg in _PATCHED_VOICES.values():
-    if _vcfg.get("mode") == "world" and os.path.exists(_vcfg["ref"]):
-        try:
+for _vname, _vcfg in _PATCHED_VOICES.items():
+    if _vcfg.get("mode") != "world":
+        continue
+    try:
+        if "refs" in _vcfg:
+            _load_world_features_multi(_vcfg["refs"], _vname)
+        elif "ref" in _vcfg and os.path.exists(_vcfg["ref"]):
             _load_world_features(_vcfg["ref"])
-        except Exception as _e:
-            print(f"[TTS-SERVICE] WORLD pre-cómputo error: {_e}", flush=True)
+    except Exception as _e:
+        print(f"[TTS-SERVICE] WORLD pre-cómputo error ({_vname}): {_e}", flush=True)
 
 # ── Helpers Piper ─────────────────────────────────────────────────────────────
 def _wav_from_piper(model, text):
@@ -140,12 +197,16 @@ def _patch_pitch(wav_bytes, ref_path):
     return out.getvalue()
 
 # ── Conversión modo "world" (pitch + timbre, WORLD vocoder) ──────────────────
-def _patch_world(wav_bytes, ref_path):
+def _patch_world(wav_bytes, cfg: dict, voice_name: str = ""):
     """
     Convierte pitch Y timbre (envolvente espectral) de la voz Piper
     para que suene como la referencia. Velocidad: ~100-300 ms.
+    Soporta ref único o modelo multi-archivo promediado.
     """
-    feats = _load_world_features(ref_path)
+    if "refs" in cfg:
+        feats = _load_world_features_multi(cfg["refs"], voice_name)
+    else:
+        feats = _load_world_features(cfg["ref"])
 
     # Cargar audio Piper y remuestrear a WORLD_SR
     y_src, sr_src = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
@@ -266,7 +327,7 @@ def piper_patch():
     try:
         mode = cfg.get("mode", "pitch")
         if mode == "world":
-            patched = _patch_world(audio, cfg["ref"])
+            patched = _patch_world(audio, cfg, voice_name=voice)
         else:
             patched = _patch_pitch(audio, cfg["ref"])
     except Exception as e:
