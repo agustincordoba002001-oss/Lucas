@@ -166,7 +166,7 @@ function scheduleWarmup() {
     console.log("[TTS] Precalentando caché Darwin/Diever/Nexus en background...");
     let hit = 0, miss = 0;
     const clonedWarmups = [
-      ["darwin", DIEVER_REF],
+      ["darwin-xtts", DIEVER_REF],
       ["diever", DIEVER_REF],
       ["nexus", NEXUS_REF],
       ["nexus-ultra", NEXUS_ULTRA_REF],
@@ -197,8 +197,8 @@ const VOICES: Record<string, {
   cloned?: boolean; piper?: string; piperPatch?: string; refAudio?: string; config?: string;
   edgeDarwin?: boolean;
 }> = {
-  "darwin":      { name: "Darwin ★ (voz clonada)",       cloned: true },
-  "darwin-edge": { name: "Darwin ★ (Edge · rápido)",     edgeDarwin: true },
+  "darwin":      { name: "Darwin ★",                      edgeDarwin: true },
+  "darwin-xtts": { name: "Darwin ★ (XTTS · alta calidad)", cloned: true },
   "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
   "nexus":       { name: "Nexus Offline Juan ★ (voz subida)", cloned: true, refAudio: NEXUS_REF, config: NEXUS_CONFIG },
   "nexus-ultra": { name: "Nexus Ultra Fast ★ (caché local)", cloned: true, refAudio: NEXUS_ULTRA_REF, config: NEXUS_ULTRA_CONFIG },
