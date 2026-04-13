@@ -1,6 +1,14 @@
 import { useState, useRef, useEffect } from "react";
+import ComentariosScreen from "./components/ComentariosScreen";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const DEMO_COMENTARIOS = [
+  { id: 1, autor: "DJ_Charly",   texto: "Ese track de anoche estuvo brutal, la mezcla quedó perfecta." },
+  { id: 2, autor: "Reggaeton99", texto: "Lolo te rompiste, el set de las 2 de la mañana fue fuego." },
+  { id: 3, autor: "MarianaVZ",   texto: "Cuándo volvés a poner esa canción que pusiste al final?" },
+  { id: 4, autor: "ElBajonero",  texto: "La intro estuvo muy buena, me gustó mucho la transición." },
+];
 
 interface Voice { id: string; name: string; cloned: boolean; piper: boolean; }
 interface VoicesResp { voices: Voice[]; daemonReady: boolean; }
@@ -128,11 +136,11 @@ export default function App() {
 
           <div style={{ marginBottom: 20 }}>
             <label style={{ display: "block", color: "#71717a", fontSize: 12, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>
-              TEXTO <span style={{ color: "#3f3f46", fontWeight: 400 }}>({texto.length}/5000)</span>
+              TEXTO <span style={{ color: "#3f3f46", fontWeight: 400 }}>({texto.length} caracteres)</span>
             </label>
             <textarea
               value={texto} onChange={(e) => setTexto(e.target.value)}
-              placeholder="Escribí acá lo que querés que diga..." maxLength={5000} rows={5}
+              placeholder="Escribí acá lo que querés que diga..." rows={5}
               style={{ width: "100%", background: "#111113", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 10, padding: "12px 14px", fontSize: 15, outline: "none", resize: "vertical", lineHeight: 1.6, boxSizing: "border-box", fontFamily: "inherit" }}
             />
           </div>
@@ -192,6 +200,14 @@ export default function App() {
               <div style={{ color: "#3f3f46", fontSize: 11, marginTop: 2 }}>{label}</div>
             </div>
           ))}
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          <ComentariosScreen
+            postId="demo"
+            voiceId={voiceId}
+            comentarios={DEMO_COMENTARIOS}
+          />
         </div>
       </div>
     </div>
