@@ -14,13 +14,19 @@ interface Props {
   comentarios?: Comentario[];
 }
 
+type PregenStatus = "pending" | "ready" | "error";
+
 export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patch", comentarios: propComentarios }: Props) {
-  const [comentarios, setComentarios]   = useState<Comentario[]>(propComentarios ?? []);
+  const [comentarios, setComentarios]     = useState<Comentario[]>(propComentarios ?? []);
   const [reproduciendo, setReproduciendo] = useState(false);
-  const [indiceActual, setIndiceActual] = useState<number | null>(null);
-  const [error, setError]               = useState<string | null>(null);
-  const [nuevoAutor, setNuevoAutor]     = useState("");
-  const [nuevoTexto, setNuevoTexto]     = useState("");
+  const [indiceActual, setIndiceActual]   = useState<number | null>(null);
+  const [error, setError]                 = useState<string | null>(null);
+  const [nuevoAutor, setNuevoAutor]       = useState("");
+  const [nuevoTexto, setNuevoTexto]       = useState("");
+
+  // Pre-generación: id → { url, status }
+  const pregenRef  = useRef<Map<string | number, { url: string; status: PregenStatus }>>(new Map());
+  const [pregenVer, setPregenVer] = useState(0); // para forzar re-render del estado visual
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef(false);
@@ -32,7 +38,12 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
     let activo = true;
     fetch(`${BASE}/api/posts/${postId}/comments`)
       .then((r) => r.json())
-      .then((data: Comentario[]) => { if (activo) setComentarios(data); })
+      .then((data: Comentario[]) => {
+        if (activo) {
+          setComentarios(data);
+          data.forEach((c) => pregenerar(c.id, c.texto));
+        }
+      })
       .catch(() => {});
     return () => { activo = false; };
   }, [postId, propComentarios]);
@@ -45,11 +56,43 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
       audioRef.current?.pause();
       urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       urlsRef.current = [];
+      pregenRef.current.clear();
       setComentarios([]);
     };
   }, []);
 
-  // Agregar comentario manualmente
+  // Pre-genera el audio de un comentario en background
+  const pregenerar = useCallback(async (id: string | number, texto: string) => {
+    if (pregenRef.current.has(id)) return;
+    pregenRef.current.set(id, { url: "", status: "pending" });
+    setPregenVer((v) => v + 1);
+    try {
+      const res = await fetch(`${BASE}/api/tts/generate`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ texto, voiceId }),
+      });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      urlsRef.current.push(url);
+      pregenRef.current.set(id, { url, status: "ready" });
+    } catch {
+      pregenRef.current.set(id, { url: "", status: "error" });
+    }
+    setPregenVer((v) => v + 1);
+  }, [voiceId]);
+
+  // Cuando cambia voiceId, invalidar todo el caché y re-pregenerar
+  useEffect(() => {
+    urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
+    urlsRef.current = [];
+    pregenRef.current.clear();
+    setPregenVer((v) => v + 1);
+    comentarios.forEach((c) => pregenerar(c.id, c.texto));
+  }, [voiceId]);
+
+  // Agregar comentario y pre-generar inmediatamente
   const agregarComentario = () => {
     const texto = nuevoTexto.trim();
     if (!texto) return;
@@ -59,6 +102,7 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
       texto,
     };
     setComentarios((prev) => [...prev, nuevo]);
+    pregenerar(nuevo.id, nuevo.texto);
     setNuevoAutor("");
     setNuevoTexto("");
   };
@@ -66,24 +110,33 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
   // Eliminar comentario
   const eliminar = (id: string | number) => {
     if (reproduciendo) detener();
+    const entry = pregenRef.current.get(id);
+    if (entry?.url) URL.revokeObjectURL(entry.url);
+    pregenRef.current.delete(id);
     setComentarios((prev) => prev.filter((c) => c.id !== id));
   };
 
-  // Generar audio con el TTS del servidor
-  const generarAudio = useCallback(async (texto: string): Promise<string> => {
+  // Obtener audio: usa pre-generado si está listo, si no genera en el momento
+  const obtenerAudio = useCallback(async (c: Comentario): Promise<string> => {
+    const entry = pregenRef.current.get(c.id);
+    if (entry?.status === "ready" && entry.url) return entry.url;
+
+    // Fallback: generar en el momento
     const res = await fetch(`${BASE}/api/tts/generate`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ texto, voiceId }),
+      body:    JSON.stringify({ texto: c.texto, voiceId }),
     });
     if (!res.ok) throw new Error(`Error TTS: ${res.status}`);
     const blob = await res.blob();
     const url  = URL.createObjectURL(blob);
     urlsRef.current.push(url);
+    pregenRef.current.set(c.id, { url, status: "ready" });
+    setPregenVer((v) => v + 1);
     return url;
   }, [voiceId]);
 
-  // Reproducción secuencial
+  // Reproducción secuencial — sin espera si ya están pre-generados
   const leerComentarios = useCallback(async () => {
     if (reproduciendo || comentarios.length === 0) return;
     abortRef.current = false;
@@ -94,7 +147,7 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
       if (abortRef.current) break;
       setIndiceActual(i);
       try {
-        const url = await generarAudio(comentarios[i].texto);
+        const url = await obtenerAudio(comentarios[i]);
         if (abortRef.current) break;
         await new Promise<void>((resolve, reject) => {
           const audio = new Audio(url);
@@ -111,7 +164,7 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
 
     setReproduciendo(false);
     setIndiceActual(null);
-  }, [comentarios, generarAudio, reproduciendo]);
+  }, [comentarios, obtenerAudio, reproduciendo]);
 
   const detener = useCallback(() => {
     abortRef.current = true;
@@ -120,14 +173,30 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
     setIndiceActual(null);
   }, []);
 
+  // Cuántos comentarios tienen audio listo
+  const listos = comentarios.filter((c) => pregenRef.current.get(c.id)?.status === "ready").length;
+  const todosListos = comentarios.length > 0 && listos === comentarios.length;
+
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
-          COMENTARIOS {comentarios.length > 0 && `(${comentarios.length})`}
-        </span>
+        <div>
+          <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
+            COMENTARIOS {comentarios.length > 0 && `(${comentarios.length})`}
+          </span>
+          {comentarios.length > 0 && (
+            <span style={{
+              marginLeft: 10, fontSize: 11, fontWeight: 600,
+              color: todosListos ? "#86efac" : "#fde68a",
+            }}>
+              {todosListos
+                ? "⚡ Todo listo — reproducción instantánea"
+                : `⏳ Preparando ${listos}/${comentarios.length}...`}
+            </span>
+          )}
+        </div>
         {reproduciendo
           ? (
             <button onClick={detener} style={{
@@ -150,7 +219,7 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
         }
       </div>
 
-      {/* Formulario para agregar comentario */}
+      {/* Formulario */}
       <div style={{ background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a", marginBottom: 16 }}>
         <div style={{ color: "#71717a", fontSize: 11, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>
           AGREGAR COMENTARIO
@@ -201,7 +270,7 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
         </div>
       )}
 
-      {/* Lista de comentarios */}
+      {/* Lista */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {comentarios.length === 0
           ? (
@@ -209,38 +278,50 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
               Sin comentarios — agregá uno arriba
             </div>
           )
-          : comentarios.map((c, i) => (
-            <div key={c.id} style={{
-              background: indiceActual === i ? "rgba(168,85,247,0.08)" : "#111113",
-              border: `1px solid ${indiceActual === i ? "rgba(168,85,247,0.4)" : "#27272a"}`,
-              borderRadius: 10, padding: "10px 14px",
-              transition: "all 0.2s",
-              display: "flex", alignItems: "flex-start", gap: 10,
-            }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                  {indiceActual === i && (
-                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />
-                  )}
-                  <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
+          : comentarios.map((c, i) => {
+            const pg = pregenRef.current.get(c.id);
+            const isReady   = pg?.status === "ready";
+            const isPending = !pg || pg.status === "pending";
+            const isPlaying = indiceActual === i;
+            return (
+              <div key={c.id} style={{
+                background: isPlaying ? "rgba(168,85,247,0.08)" : "#111113",
+                border: `1px solid ${isPlaying ? "rgba(168,85,247,0.4)" : "#27272a"}`,
+                borderRadius: 10, padding: "10px 14px",
+                transition: "all 0.2s",
+                display: "flex", alignItems: "flex-start", gap: 10,
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                    {isPlaying && (
+                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />
+                    )}
+                    <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
+                    <span style={{
+                      marginLeft: "auto", fontSize: 10, fontWeight: 700,
+                      color: isReady ? "#86efac" : isPending ? "#fde68a" : "#fca5a5",
+                    }}>
+                      {isReady ? "⚡" : isPending ? "⏳" : "✗"}
+                    </span>
+                  </div>
+                  <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
                 </div>
-                <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
+                <button
+                  onClick={() => eliminar(c.id)}
+                  title="Eliminar"
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "#3f3f46", fontSize: 16, padding: "2px 4px",
+                    flexShrink: 0, lineHeight: 1,
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = "#fca5a5")}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = "#3f3f46")}
+                >
+                  ×
+                </button>
               </div>
-              <button
-                onClick={() => eliminar(c.id)}
-                title="Eliminar"
-                style={{
-                  background: "none", border: "none", cursor: "pointer",
-                  color: "#3f3f46", fontSize: 16, padding: "2px 4px",
-                  flexShrink: 0, lineHeight: 1,
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "#fca5a5")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "#3f3f46")}
-              >
-                ×
-              </button>
-            </div>
-          ))
+            );
+          })
         }
       </div>
     </div>
