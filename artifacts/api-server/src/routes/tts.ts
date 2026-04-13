@@ -222,6 +222,15 @@ const VOICES: Record<string, {
   "elvira-es":   { name: "Elvira (España)",    voice: "es-ES-ElviraNeural",  pitch: "+0Hz", rate: "+0%" },
 };
 
+// ── GET /tts/xtts-status ─────────────────────────────────────────────────────
+ttsRouter.get("/tts/xtts-status", (req, res) => {
+  const texto = (req.query.texto as string ?? "").trim();
+  if (!texto) { res.json({ ready: false }); return; }
+  const key   = cacheKey(texto, "darwin-xtts");
+  const ready = !!cacheGet(key);
+  res.json({ ready, daemonReady });
+});
+
 // ── GET /tts/voices ───────────────────────────────────────────────────────────
 ttsRouter.get("/tts/voices", (_req, res) => {
   res.json({
@@ -414,6 +423,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       cacheSet(edgeKey, buf);
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("X-Cache", "MISS");
+      res.setHeader("X-Darwin-Upgrading", "true");
       res.send(buf);
     } catch (e) {
       res.status(503).json({ error: `Error Edge Darwin: ${(e as Error).message}` });

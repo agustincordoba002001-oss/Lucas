@@ -6,9 +6,12 @@ Protocolo:
   OUT (stdout): [uint32 big-endian len][WAV bytes]
   ERR (stdout): [uint32 = 0][uint32 msg-len][error msg bytes]
 
-Optimizaciones vs versión original:
-  - Conditioning latents se computan una sola vez y se cachean en memoria.
-  - El WAV se genera en memoria (sin escribir a disco).
+Optimizaciones velocidad máxima:
+  - Conditioning latents cacheados en memoria.
+  - WAV en memoria sin disco.
+  - Temperatura 0.1 (greedy, más rápido).
+  - enable_text_splitting=False para frases cortas.
+  - top_k reducido para decodificación rápida.
 """
 import sys, os, json, struct, io, warnings, functools
 warnings.filterwarnings("ignore")
@@ -49,8 +52,8 @@ def get_cond(ref_path: str):
     if ref_path not in _cond_cache:
         gpt_lat, spk_emb = xtts.get_conditioning_latents(
             audio_path=[ref_path],
-            gpt_cond_len=xtts.config.gpt_cond_len,
-            max_ref_length=xtts.config.max_ref_len,
+            gpt_cond_len=3,
+            max_ref_length=10,
             sound_norm_refs=xtts.config.sound_norm_refs,
         )
         _cond_cache[ref_path] = (gpt_lat, spk_emb)
@@ -85,14 +88,18 @@ for line in sys.stdin:
 
         gpt_lat, spk_emb = get_cond(ref)
 
-        # Inferencia con conditioning cacheado
         out = xtts.inference(
             texto, "es", gpt_lat, spk_emb,
-            temperature=0.7,
+            temperature=0.1,
+            length_penalty=1.0,
+            repetition_penalty=5.0,
+            top_k=30,
+            top_p=0.75,
+            speed=1.0,
+            enable_text_splitting=False,
         )
         wav_np = np.array(out["wav"], dtype=np.float32)
 
-        # Convertir a WAV en memoria (sin disco)
         buf = io.BytesIO()
         sf.write(buf, wav_np, SAMPLE_RATE, format="WAV", subtype="PCM_16")
         wav_bytes = buf.getvalue()
