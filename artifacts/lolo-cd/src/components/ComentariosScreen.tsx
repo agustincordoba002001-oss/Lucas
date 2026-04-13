@@ -16,8 +16,17 @@ interface Props {
 
 type PregenStatus = "pending" | "ready" | "error";
 
+const LS_KEY = "lolo_comentarios";
+
+function cargarDesdeLS(): Comentario[] {
+  try { return JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"); } catch { return []; }
+}
+function guardarEnLS(cs: Comentario[]) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(cs)); } catch {}
+}
+
 export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patch", comentarios: propComentarios }: Props) {
-  const [comentarios, setComentarios]     = useState<Comentario[]>(propComentarios ?? []);
+  const [comentarios, setComentarios]     = useState<Comentario[]>(() => propComentarios ?? cargarDesdeLS());
   const [reproduciendo, setReproduciendo] = useState(false);
   const [indiceActual, setIndiceActual]   = useState<number | null>(null);
   const [error, setError]                 = useState<string | null>(null);
@@ -32,9 +41,21 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
   const abortRef = useRef(false);
   const urlsRef  = useRef<string[]>([]);
 
-  // Carga desde API si no vienen props
+  // Guardar en localStorage cada vez que cambian los comentarios
+  useEffect(() => {
+    if (!propComentarios) guardarEnLS(comentarios);
+  }, [comentarios, propComentarios]);
+
+  // Al montar: pre-generar audio de los comentarios ya guardados
+  useEffect(() => {
+    comentarios.forEach((c) => pregenerar(c.id, c.texto));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Carga desde API si no vienen props y localStorage está vacío
   useEffect(() => {
     if (propComentarios) return;
+    if (cargarDesdeLS().length > 0) return; // ya hay datos en LS, no pisar
     let activo = true;
     fetch(`${BASE}/api/posts/${postId}/comments`)
       .then((r) => r.json())
@@ -48,16 +69,15 @@ export default function ComentariosScreen({ postId, voiceId = "darwin-piper-patc
     return () => { activo = false; };
   }, [postId, propComentarios]);
 
-  // Limpieza al salir
+  // Limpieza al salir — solo memoria, los textos quedan en localStorage
   useEffect(() => {
     return () => {
-      console.log("Limpiando comentarios de la memoria...");
+      console.log("Limpiando audio de la memoria (textos guardados)...");
       abortRef.current = true;
       audioRef.current?.pause();
       urlsRef.current.forEach((u) => URL.revokeObjectURL(u));
       urlsRef.current = [];
       pregenRef.current.clear();
-      setComentarios([]);
     };
   }, []);
 
