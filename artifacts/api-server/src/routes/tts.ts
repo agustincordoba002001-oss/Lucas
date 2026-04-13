@@ -191,6 +191,9 @@ function scheduleWarmup() {
 
 startDaemon();
 
+// Frases con XTTS en generación background (evita duplicados)
+const _xttsInFlight = new Set<string>();
+
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {
   name: string; voice?: string; pitch?: string; rate?: string;
@@ -345,16 +348,58 @@ ttsRouter.post("/tts/generate", async (req, res) => {
     return;
   }
 
-  // ── Edge → Darwin (Edge TTS + WORLD vocoder de Darwin) ───────────────────
+  // ── Darwin inteligente: Edge rápido + upgrade XTTS en background ──────────
   if (voz.edgeDarwin) {
-    const key = cacheKey(text, voiceId);
-    const cached = cacheGet(key);
-    if (cached) {
+    const xttsKey = cacheKey(text, "darwin-xtts");   // caché de alta calidad
+    const edgeKey = cacheKey(text, voiceId);          // caché de respuesta rápida
+
+    // 1. Si ya tenemos XTTS de alta calidad, devolverlo directo
+    const xttsHit = cacheGet(xttsKey);
+    if (xttsHit) {
       res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "HIT");
-      res.send(cached);
+      res.setHeader("X-Cache", "HIT-XTTS");
+      res.send(xttsHit);
       return;
     }
+
+    // 2. Lanzar generación XTTS en background (si el daemon está listo y no hay una en curso)
+    if (daemonReady && !_xttsInFlight.has(xttsKey)) {
+      _xttsInFlight.add(xttsKey);
+      (async () => {
+        try {
+          const chunks = splitSentences(text);
+          const parts: Buffer[] = [];
+          for (const chunk of chunks) {
+            const ck = cacheKey(chunk, "darwin-xtts");
+            const cc = cacheGet(ck);
+            if (cc) { parts.push(cc); continue; }
+            const audio = await askDaemon(chunk, DIEVER_REF);
+            cacheSet(ck, audio);
+            parts.push(audio);
+          }
+          const xttsAudio = concatWavBuffers(parts);
+          cacheSet(xttsKey, xttsAudio);
+          // Actualizar también el caché rápido para que próximas respuestas sean XTTS
+          cacheSet(edgeKey, xttsAudio);
+          console.log(`[TTS] XTTS background listo: "${text.slice(0, 50)}"`);
+        } catch (e) {
+          console.error("[TTS] XTTS background error:", (e as Error).message);
+        } finally {
+          _xttsInFlight.delete(xttsKey);
+        }
+      })().catch(console.error);
+    }
+
+    // 3. Si ya hay un Edge+Darwin en caché, devolver inmediato
+    const edgeHit = cacheGet(edgeKey);
+    if (edgeHit) {
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-Cache", "HIT");
+      res.send(edgeHit);
+      return;
+    }
+
+    // 4. Generar Edge+Darwin como respuesta rápida (~0.75s)
     try {
       const upstream = await fetch(`${TTS_SERVICE}/edge-darwin`, {
         method:  "POST",
@@ -366,7 +411,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
         res.status(upstream.status).json(err); return;
       }
       const buf = Buffer.from(await upstream.arrayBuffer());
-      cacheSet(key, buf);
+      cacheSet(edgeKey, buf);
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("X-Cache", "MISS");
       res.send(buf);
