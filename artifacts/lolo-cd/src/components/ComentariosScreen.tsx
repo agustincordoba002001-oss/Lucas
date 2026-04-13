@@ -22,16 +22,15 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef(false);
 
-  // ── Cargar página de comentarios ──────────────────────────────────────────
+  // ── Cargar frases semilla ─────────────────────────────────────────────────
   const cargarPagina = useCallback(async (cursor: number | null = null) => {
     if (cargando) return;
     setCargando(true);
     try {
-      const url = cursor
+      const url  = cursor
         ? `${BASE}/api/comments?limit=30&cursor=${cursor}`
         : `${BASE}/api/comments?limit=30`;
-      const r    = await fetch(url);
-      const data: PageResp = await r.json();
+      const data: PageResp = await fetch(url).then(r => r.json());
       setComentarios(prev => cursor ? [...prev, ...data.items] : data.items);
       setNextCursor(data.nextCursor);
     } catch { /* ignorar */ }
@@ -40,8 +39,8 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
 
   useEffect(() => { cargarPagina(null); }, []);
 
-  // ── Generar audio bajo demanda (0 bytes en disco) ─────────────────────────
-  const generarAudio = useCallback(async (texto: string): Promise<HTMLAudioElement> => {
+  // ── Generar audio al momento desde la semilla de texto ───────────────────
+  const generarYReproducir = useCallback(async (texto: string): Promise<void> => {
     const res = await fetch(`${BASE}/api/tts/generate`, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
@@ -50,11 +49,15 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     if (!res.ok) throw new Error(`Error TTS: ${res.status}`);
     const url   = URL.createObjectURL(await res.blob());
     const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
-    return audio;
+    audioRef.current = audio;
+    await new Promise<void>((resolve, reject) => {
+      audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error reproduciendo")); };
+      audio.play().catch(reject);
+    });
   }, [voiceId]);
 
-  // ── Reproducir un comentario individual ───────────────────────────────────
+  // ── Reproducir una sola frase ─────────────────────────────────────────────
   const reproducirUno = useCallback(async (c: Comentario, idx: number) => {
     if (reproduciendo) return;
     abortRef.current = false;
@@ -63,20 +66,17 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     setGenerandoIdx(idx);
     setError(null);
     try {
-      const audio = await generarAudio(c.texto);
-      if (abortRef.current) { URL.revokeObjectURL(audio.src); return; }
-      audioRef.current = audio;
+      await generarYReproducir(c.texto);
+    } catch (e) {
+      if (!abortRef.current) setError((e as Error).message);
+    } finally {
+      setReproduciendo(false);
+      setIndiceActual(null);
       setGenerandoIdx(null);
-      await new Promise<void>((res, rej) => {
-        audio.onended = res;
-        audio.onerror = () => rej(new Error("Error reproduciendo"));
-        audio.play().catch(rej);
-      });
-    } catch (e) { if (!abortRef.current) setError((e as Error).message); }
-    finally { setReproduciendo(false); setIndiceActual(null); setGenerandoIdx(null); }
-  }, [generarAudio, reproduciendo]);
+    }
+  }, [generarYReproducir, reproduciendo]);
 
-  // ── Reproducción secuencial de todos ─────────────────────────────────────
+  // ── Leer todas en secuencia ───────────────────────────────────────────────
   const leerTodos = useCallback(async () => {
     if (reproduciendo || comentarios.length === 0) return;
     abortRef.current = false;
@@ -87,21 +87,16 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
       setIndiceActual(i);
       setGenerandoIdx(i);
       try {
-        const audio = await generarAudio(comentarios[i].texto);
-        if (abortRef.current) { URL.revokeObjectURL(audio.src); break; }
-        audioRef.current = audio;
-        setGenerandoIdx(null);
-        await new Promise<void>((res, rej) => {
-          audio.onended = res;
-          audio.onerror = () => rej(new Error("Error reproduciendo"));
-          audio.play().catch(rej);
-        });
-      } catch (e) { if (!abortRef.current) { setError((e as Error).message); break; } }
+        await generarYReproducir(comentarios[i].texto);
+      } catch (e) {
+        if (!abortRef.current) { setError((e as Error).message); break; }
+      }
+      setGenerandoIdx(null);
     }
     setReproduciendo(false);
     setIndiceActual(null);
     setGenerandoIdx(null);
-  }, [comentarios, generarAudio, reproduciendo]);
+  }, [comentarios, generarYReproducir, reproduciendo]);
 
   const detener = useCallback(() => {
     abortRef.current = true;
@@ -111,13 +106,13 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     setGenerandoIdx(null);
   }, []);
 
-  // ── Agregar comentario ────────────────────────────────────────────────────
+  // ── Guardar nueva frase semilla ───────────────────────────────────────────
   const agregarComentario = async () => {
     const texto = nuevoTexto.trim();
     if (!texto || enviando) return;
     setEnviando(true);
     try {
-      const res = await fetch(`${BASE}/api/comments`, {
+      const res  = await fetch(`${BASE}/api/comments`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({ autor: nuevoAutor.trim() || "Anónimo", texto }),
@@ -126,11 +121,11 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
       setComentarios(prev => [nuevo, ...prev]);
       setNuevoAutor("");
       setNuevoTexto("");
-    } catch { setError("Error al guardar comentario"); }
+    } catch { setError("Error al guardar frase"); }
     finally { setEnviando(false); }
   };
 
-  // ── Eliminar comentario ───────────────────────────────────────────────────
+  // ── Eliminar frase ────────────────────────────────────────────────────────
   const eliminar = async (id: string) => {
     if (reproduciendo) detener();
     setComentarios(prev => prev.filter(c => c.id !== id));
@@ -147,10 +142,10 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
             FRASES SEMILLA {comentarios.length > 0 && `(${comentarios.length})`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            texto guardado para siempre · audio generado al instante · 0 bytes en disco
+            guardadas para siempre como texto · audio generado al instante · 0 bytes
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div>
           {reproduciendo
             ? <button onClick={detener} style={{ padding: "8px 16px", borderRadius: 8, border: "none", cursor: "pointer", background: "rgba(239,68,68,0.15)", color: "#fca5a5", fontSize: 13, fontWeight: 600 }}>⏹ Detener</button>
             : <button onClick={leerTodos} disabled={comentarios.length === 0} style={{ padding: "8px 16px", borderRadius: 8, border: "none", cursor: comentarios.length > 0 ? "pointer" : "not-allowed", background: comentarios.length > 0 ? "linear-gradient(135deg,#7c3aed,#c026d3)" : "#27272a", color: comentarios.length > 0 ? "#fff" : "#52525b", fontSize: 13, fontWeight: 600 }}>▶ Leer todas</button>
@@ -162,20 +157,20 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
       <div style={{ background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a", marginBottom: 16 }}>
         <div style={{ color: "#71717a", fontSize: 11, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>NUEVA FRASE SEMILLA</div>
         <input
-          value={nuevoAutor} onChange={(e) => setNuevoAutor(e.target.value)}
+          value={nuevoAutor} onChange={e => setNuevoAutor(e.target.value)}
           placeholder="Nombre (opcional)"
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }}
         />
         <textarea
-          value={nuevoTexto} onChange={(e) => setNuevoTexto(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agregarComentario(); } }}
+          value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agregarComentario(); } }}
           placeholder="Escribí la frase... (Enter para guardar)" rows={2}
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" }}
         />
         <button
           onClick={agregarComentario} disabled={!nuevoTexto.trim() || enviando}
           style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: nuevoTexto.trim() && !enviando ? "pointer" : "not-allowed", background: nuevoTexto.trim() && !enviando ? "rgba(168,85,247,0.15)" : "#18181b", color: nuevoTexto.trim() && !enviando ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600, transition: "all 0.15s" }}>
-          {enviando ? "Guardando semilla..." : "✦ Guardar frase semilla"}
+          {enviando ? "Guardando..." : "✦ Guardar frase semilla"}
         </button>
       </div>
 
@@ -196,30 +191,23 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
               <div key={c.id} style={{ background: isPlaying ? "rgba(168,85,247,0.08)" : "#111113", border: `1px solid ${isPlaying ? "rgba(168,85,247,0.4)" : "#27272a"}`, borderRadius: 10, padding: "10px 14px", transition: "all 0.2s", display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    {isPlaying && !isGenerating && (
-                      <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />
-                    )}
+                    {isPlaying && !isGenerating && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
                     <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
-                    {isGenerating && (
-                      <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700, animation: "pulse 1s infinite" }}>⏳ generando...</span>
-                    )}
+                    {isGenerating && <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ generando...</span>}
                   </div>
                   <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
                   {!reproduciendo && (
-                    <button
-                      onClick={() => reproducirUno(c, i)}
-                      title="Reproducir esta frase"
-                      style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.3)", cursor: "pointer", color: "#d8b4fe", fontSize: 12, padding: "3px 8px", borderRadius: 6, lineHeight: 1 }}>
+                    <button onClick={() => reproducirUno(c, i)} title="Reproducir"
+                      style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.3)", cursor: "pointer", color: "#d8b4fe", fontSize: 11, padding: "3px 8px", borderRadius: 6 }}>
                       ▶
                     </button>
                   )}
-                  <button
-                    onClick={() => eliminar(c.id)} title="Eliminar"
+                  <button onClick={() => eliminar(c.id)} title="Eliminar"
                     style={{ background: "none", border: "none", cursor: "pointer", color: "#3f3f46", fontSize: 16, padding: "2px 4px", lineHeight: 1 }}
-                    onMouseEnter={(e) => (e.currentTarget.style.color = "#fca5a5")}
-                    onMouseLeave={(e) => (e.currentTarget.style.color = "#3f3f46")}>×</button>
+                    onMouseEnter={e => (e.currentTarget.style.color = "#fca5a5")}
+                    onMouseLeave={e => (e.currentTarget.style.color = "#3f3f46")}>×</button>
                 </div>
               </div>
             );
@@ -227,10 +215,8 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
         }
       </div>
 
-      {/* Cargar más */}
       {nextCursor && (
-        <button
-          onClick={() => cargarPagina(nextCursor)} disabled={cargando}
+        <button onClick={() => cargarPagina(nextCursor)} disabled={cargando}
           style={{ marginTop: 12, width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #27272a", background: "#111113", color: "#71717a", fontSize: 13, cursor: cargando ? "not-allowed" : "pointer" }}>
           {cargando ? "Cargando..." : "Cargar más frases"}
         </button>
