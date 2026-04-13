@@ -3,12 +3,6 @@ import ComentariosScreen from "./components/ComentariosScreen";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-const DEMO_COMENTARIOS = [
-  { id: 1, autor: "DJ_Charly",   texto: "Ese track de anoche estuvo brutal, la mezcla quedó perfecta." },
-  { id: 2, autor: "Reggaeton99", texto: "Lolo te rompiste, el set de las 2 de la mañana fue fuego." },
-  { id: 3, autor: "MarianaVZ",   texto: "Cuándo volvés a poner esa canción que pusiste al final?" },
-  { id: 4, autor: "ElBajonero",  texto: "La intro estuvo muy buena, me gustó mucho la transición." },
-];
 
 interface Voice { id: string; name: string; cloned: boolean; piper: boolean; }
 interface VoicesResp { voices: Voice[]; daemonReady: boolean; }
@@ -206,7 +200,6 @@ export default function App() {
           <ComentariosScreen
             postId="demo"
             voiceId={voiceId}
-            comentarios={DEMO_COMENTARIOS}
           />
         </div>
       </div>
