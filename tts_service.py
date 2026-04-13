@@ -253,8 +253,12 @@ def _patch_world(wav_bytes, cfg: dict, voice_name: str = ""):
     return out.getvalue()
 
 # ── Risa humana — detección y síntesis ───────────────────────────────────────
-# Detecta: jaja, jajaja, jjaj, JAJA, JaJaJa, jjajajaja, etc.
-_LAUGH_RE = re.compile(r'[jJ]+[aA]+(?:[jJ]*[aA]+)*[jJ]*', re.IGNORECASE)
+# Detecta: jaja, jajaja, jeje, jihi, haha, JAJA, JaJaJa, jjajajaja, etc.
+_LAUGH_RE = re.compile(
+    r'[jJ]+[aAeEiIoO]+(?:[jJ]+[aAeEiIoO]+)*[jJ]*'        # ja/je/ji/jo variants (jaja, jeje, jiji)
+    r'|(?:[hH]+[aAeEiI]+){2,}[hH]*',                      # ha/he/hi — mínimo 2 sílabas (haha, hehe)
+    re.IGNORECASE,
+)
 
 def _split_laugh_segments(text: str):
     """Devuelve lista de (segmento, es_risa)."""
@@ -271,9 +275,9 @@ def _split_laugh_segments(text: str):
     return result if result else [(text, False)]
 
 def _laugh_count(laugh_str: str) -> int:
-    """Cuántos 'ja' tiene la risa — mínimo 2, máximo 7."""
-    units = re.findall(r'[jJ]+[aA]+', laugh_str)
-    return max(2, min(len(units), 7))
+    """Cuántos pulsos de risa — mínimo 2, máximo 8."""
+    units = re.findall(r'[jJhH]+[aAeEiIoO]+', laugh_str)
+    return max(2, min(len(units), 8))
 
 def _concat_wav_bytes(parts: list) -> bytes:
     """Concatena múltiples WAV en uno solo (mismo SR/canales)."""
@@ -298,80 +302,119 @@ def _concat_wav_bytes(parts: list) -> bytes:
 
 def _gen_laugh_audio(n_ja: int, model, cfg: dict, voice_name: str):
     """
-    Risa tipo humana con voz Darwin:
-    1. Piper sintetiza "ja, ja, ja ..." (n_ja veces)
-    2. WORLD vocoder convierte timbre + pitch a Darwin
-    3. Modula pitch: contorno de risa (sube inicio, baja final)
-    4. Modula amplitud: pulsos rítmicos + soplo de aire
+    Risa humana real con timbre de Darwin — sintetizada directamente con WORLD vocoder.
+
+    Estrategia:
+      - No usa TTS como base (eso es lo que lo hacía sonar robótico).
+      - Construye f0, sp (envolvente espectral de Darwin) y ap (aperiodicidad alta = aspirado)
+        frame por frame y los sintetiza con pw.synthesize.
+      - Cada "ja" es un burst con: onset aspirado → vocal sonora → cola soplada.
+      - El contorno de pitch baja dentro de cada burst y globalmente a lo largo de la risa.
+      - La amplitud decrece levemente burst a burst (la risa se apaga).
     """
-    laugh_text = ", ".join(["ja"] * n_ja)
-    wav_bytes = _wav_from_piper(model, laugh_text)
-    if not wav_bytes:
-        return None
-
-    y_src, sr_src = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
-    if y_src.ndim > 1:
-        y_src = y_src.mean(axis=1)
-
-    y_up = librosa.resample(y_src, orig_sr=sr_src, target_sr=WORLD_SR) if sr_src != WORLD_SR else y_src.copy()
-    y_up = y_up.astype(np.float64)
+    FRAME_PERIOD = 5.0   # ms — estándar de WORLD
 
     feats = _load_world_features_multi(cfg["refs"], voice_name) if "refs" in cfg else _load_world_features(cfg["ref"])
+    ref_f0       = feats["f0_median"]          # ~174 Hz para Darwin
+    mean_log_sp  = feats["mean_log_sp"]        # (513,) — envolvente espectral
+    n_sp_bins    = len(mean_log_sp)            # 513
 
-    f0_src, t_src = pw.dio(y_up, WORLD_SR)
-    f0_src = pw.stonemask(y_up, f0_src, t_src, WORLD_SR)
-    sp_src = pw.cheaptrick(y_up, f0_src, t_src, WORLD_SR)
-    ap_src = pw.d4c(y_up, f0_src, t_src, WORLD_SR)
+    darwin_sp_lin = np.exp(mean_log_sp)
+    darwin_sp_lin = darwin_sp_lin / (np.mean(darwin_sp_lin) + 1e-10)
 
-    voiced  = f0_src > 0
-    f0_conv = f0_src.copy()
-    if voiced.any():
-        src_median = float(np.median(f0_src[voiced]))
-        ref_median = feats["f0_median"]
-        if src_median > 0 and ref_median > 0:
-            scale = float(np.clip(ref_median / src_median, 0.5, 2.0))
-            f0_conv[voiced] = f0_src[voiced] * scale
+    # Realce de formantes vocálicos para "a" — F1 ~800 Hz, F2 ~1200 Hz a 16kHz
+    freqs_norm  = np.linspace(0, 1, n_sp_bins)
+    laugh_shape = (
+        1.0
+        + 0.50 * np.exp(-((freqs_norm - 0.100)**2) / 0.004)   # F1
+        + 0.35 * np.exp(-((freqs_norm - 0.150)**2) / 0.006)   # F2
+        + 0.15 * np.exp(-((freqs_norm - 0.040)**2) / 0.003)   # sub-bajo (cuerpo)
+    )
+    laugh_sp = darwin_sp_lin * laugh_shape   # (513,)
 
-    # Contorno de risa: pico al 25%, caída suave + oscilación por "ja"
-    n_frames = len(f0_conv)
-    t_norm   = np.linspace(0, 1, n_frames)
-    global_env = 1.0 + 0.20 * np.exp(-((t_norm - 0.22)**2) / 0.04) - 0.14 * t_norm
-    osc        = 0.07 * np.sin(n_ja * 2 * np.pi * t_norm + 0.5)
-    f0_conv[voiced] = np.clip(f0_conv[voiced] * (global_env[voiced] + osc[voiced]), 60, 520)
+    rng = np.random.default_rng()
 
-    src_mean_log_sp = np.mean(np.log(sp_src + 1e-10), axis=0)
-    sp_conv = np.clip(sp_src * np.exp(feats["mean_log_sp"] - src_mean_log_sp)[np.newaxis, :], 1e-10, None)
+    # Duración en frames de cada burst y pausa
+    burst_ms  = rng.integers(200, 260)        # ms por burst (varía un poco)
+    gap_ms    = 60                             # ms entre bursts
+    burst_f   = int(burst_ms  / FRAME_PERIOD)
+    gap_f     = int(gap_ms    / FRAME_PERIOD)
+    total_f   = n_ja * (burst_f + gap_f) + 4  # frames totales
 
-    y_out = pw.synthesize(f0_conv, sp_conv, ap_src, WORLD_SR).astype(np.float32)
+    f0_all = np.zeros(total_f,                 dtype=np.float64)
+    sp_all = np.ones( (total_f, n_sp_bins),    dtype=np.float64) * 1e-10
+    ap_all = np.ones( (total_f, n_sp_bins),    dtype=np.float64) * 0.98  # silencio = todo aperiódico
 
-    # Envolvente de amplitud: n_ja pulsos asimétricos (ataque rápido, caída lenta)
-    n_out = len(y_out)
-    t_out = np.linspace(0, 1, n_out)
-    amp   = np.zeros(n_out, dtype=np.float32)
     for i in range(n_ja):
-        center = (i + 0.45) / n_ja
-        h      = 1.0 - 0.06 * i
-        lw, rw = 0.18 / n_ja, 0.38 / n_ja
-        amp += h * np.where(
-            t_out <= center,
-            np.exp(-((t_out - center)**2) / (lw**2 + 1e-14)),
-            np.exp(-((t_out - center)**2) / (rw**2 + 1e-14)),
-        )
-    mx = amp.max()
-    if mx > 0:
-        amp /= mx
+        fs = i * (burst_f + gap_f)   # frame de inicio del burst
+        fe = fs + burst_f
 
-    noise  = np.random.randn(n_out).astype(np.float32) * 0.013
-    y_out  = y_out * amp + noise * amp * 0.28
+        # ── Contorno de pitch ──────────────────────────────────────────────
+        # Global: parte 18 % sobre el f0 de referencia, baja ~20 % al final
+        progress  = i / max(n_ja - 1, 1)
+        f0_base   = ref_f0 * (1.18 - 0.22 * progress)
+        f0_base  += rng.uniform(-6, 6)    # microvariación natural
 
-    if WORLD_SR != sr_src:
-        y_out = librosa.resample(y_out, orig_sr=WORLD_SR, target_sr=sr_src)
-    peak = float(np.max(np.abs(y_out))) if len(y_out) else 0
-    if peak > 0:
-        y_out = (y_out / peak) * 0.88
+        t_loc = np.linspace(0, 1, burst_f)
+        # Local: dentro del burst el pitch baja 12 % y tiene un leve vibrato
+        f0_burst = f0_base * (1.0 + 0.12 * (1 - t_loc) + 0.018 * np.sin(2 * np.pi * 5.5 * t_loc))
+
+        # ── Máscara voiced/unvoiced ────────────────────────────────────────
+        onset_unvoiced  = max(2, int(burst_f * 0.08))   # aspiración al inicio
+        offset_unvoiced = max(2, int(burst_f * 0.18))   # aspiración al final
+        voiced_mask = np.zeros(burst_f, dtype=bool)
+        voiced_mask[onset_unvoiced : burst_f - offset_unvoiced] = True
+
+        f0_all[fs:fe] = np.where(voiced_mask, f0_burst, 0.0)
+
+        # ── Envolvente de amplitud del burst (ataque rápido, caída exponencial) ──
+        att_f = max(2, int(burst_f * 0.07))
+        dec_f = burst_f - att_f
+        amp_env = np.concatenate([
+            np.linspace(0, 1, att_f) ** 0.5,
+            np.exp(-3.0 * np.linspace(0, 1, dec_f))
+        ])[:burst_f]
+
+        amp_scale = 1.0 - 0.055 * i     # la risa se va apagando
+
+        # ── Envolvente espectral ───────────────────────────────────────────
+        sp_frame = laugh_sp * amp_scale
+        sp_all[fs:fe] = amp_env[:, np.newaxis] * sp_frame[np.newaxis, :] + 1e-10
+
+        # ── Aperiodicidad: más soplado en onset/offset, más periódico en pico ──
+        # ap ≈ 0 → puramente periódico (tono puro)
+        # ap ≈ 1 → puramente aperiódico (ruido)
+        ap_voiced  = 0.28    # pico del burst — algo soplado (voz natural)
+        ap_unvoic  = 0.92    # onset/offset — aspirado
+        ap_env = np.where(voiced_mask, ap_voiced, ap_unvoic)
+        # Transición suave
+        ap_env = np.convolve(ap_env, np.hanning(5) / np.hanning(5).sum(), mode='same')
+        ap_all[fs:fe] = ap_env[:, np.newaxis] * np.ones((1, n_sp_bins))
+
+        # ── Pausa entre bursts — aspiración suave ─────────────────────────
+        if i < n_ja - 1:
+            gs = fe
+            ge = gs + gap_f
+            if ge <= total_f:
+                # sp muy pequeño con decaimiento
+                breath_env = np.exp(-6 * np.linspace(0, 1, gap_f)) * 0.04 * amp_scale
+                sp_all[gs:ge] = breath_env[:, np.newaxis] * darwin_sp_lin[np.newaxis, :] + 1e-10
+                ap_all[gs:ge] = 0.97   # casi todo ruido (aspiración)
+
+    sp_all = np.clip(sp_all, 1e-10, None)
+    ap_all = np.clip(ap_all, 0.0, 1.0 - 1e-6)
+
+    y_out = pw.synthesize(f0_all, sp_all, ap_all, WORLD_SR, frame_period=FRAME_PERIOD).astype(np.float32)
+
+    # Micro-ruido de habitación (muy sutil)
+    y_out += rng.standard_normal(len(y_out)).astype(np.float32) * 0.006
+
+    peak = float(np.max(np.abs(y_out)))
+    if peak > 1e-6:
+        y_out = (y_out / peak) * 0.87
 
     out = io.BytesIO()
-    sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
+    sf.write(out, y_out, WORLD_SR, format="WAV", subtype="PCM_16")
     return out.getvalue()
 
 # ── Health ────────────────────────────────────────────────────────────────────
