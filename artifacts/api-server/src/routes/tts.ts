@@ -195,8 +195,10 @@ startDaemon();
 const VOICES: Record<string, {
   name: string; voice?: string; pitch?: string; rate?: string;
   cloned?: boolean; piper?: string; piperPatch?: string; refAudio?: string; config?: string;
+  edgeDarwin?: boolean;
 }> = {
   "darwin":      { name: "Darwin ★ (voz clonada)",       cloned: true },
+  "darwin-edge": { name: "Darwin ★ (Edge · rápido)",     edgeDarwin: true },
   "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
   "nexus":       { name: "Nexus Offline Juan ★ (voz subida)", cloned: true, refAudio: NEXUS_REF, config: NEXUS_CONFIG },
   "nexus-ultra": { name: "Nexus Ultra Fast ★ (caché local)", cloned: true, refAudio: NEXUS_ULTRA_REF, config: NEXUS_ULTRA_CONFIG },
@@ -339,6 +341,37 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       res.send(buf);
     } catch (e) {
       res.status(503).json({ error: `Error Piper Patch: ${(e as Error).message}` });
+    }
+    return;
+  }
+
+  // ── Edge → Darwin (Edge TTS + WORLD vocoder de Darwin) ───────────────────
+  if (voz.edgeDarwin) {
+    const key = cacheKey(text, voiceId);
+    const cached = cacheGet(key);
+    if (cached) {
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-Cache", "HIT");
+      res.send(cached);
+      return;
+    }
+    try {
+      const upstream = await fetch(`${TTS_SERVICE}/edge-darwin`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ texto: text }),
+      });
+      if (!upstream.ok) {
+        const err = await upstream.json().catch(() => ({ error: "Error Edge Darwin" }));
+        res.status(upstream.status).json(err); return;
+      }
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      cacheSet(key, buf);
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-Cache", "MISS");
+      res.send(buf);
+    } catch (e) {
+      res.status(503).json({ error: `Error Edge Darwin: ${(e as Error).message}` });
     }
     return;
   }

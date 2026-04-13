@@ -252,6 +252,66 @@ def _patch_world(wav_bytes, cfg: dict, voice_name: str = ""):
     sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
     return out.getvalue()
 
+# ── Edge → Darwin (Edge TTS + WORLD vocoder de Darwin) ───────────────────────
+# Voz base Edge: hombre español latinoamericano de pitch similar a Darwin
+_EDGE_DARWIN_BASE  = "es-MX-JorgeNeural"
+_EDGE_DARWIN_PITCH = "+0Hz"
+_EDGE_DARWIN_RATE  = "+0%"
+
+# Config Darwin (igual que darwin-piper-patch pero sin "base" Piper)
+_DARWIN_WORLD_CFG = {
+    "refs": _DARWIN_REFS,
+    "mode": "world",
+}
+
+def _mp3_to_wav_bytes(mp3_bytes: bytes, target_sr: int = WORLD_SR) -> bytes:
+    """Convierte MP3 (bytes) a WAV PCM_16 (bytes) usando librosa."""
+    y, sr = librosa.load(io.BytesIO(mp3_bytes), sr=target_sr, mono=True)
+    out = io.BytesIO()
+    sf.write(out, y, target_sr, format="WAV", subtype="PCM_16")
+    return out.getvalue()
+
+@app.post("/edge-darwin")
+def edge_darwin():
+    """Edge TTS → WORLD Darwin: velocidad de Edge, timbre de Darwin."""
+    d    = request.get_json(force=True)
+    text = (d.get("texto") or "").strip()
+    if not text:
+        return jsonify({"error": "texto requerido"}), 400
+
+    # 1. Generar con Edge TTS (MP3)
+    async def _gen():
+        buf = io.BytesIO()
+        async for chunk in edge_tts.Communicate(
+            text, _EDGE_DARWIN_BASE,
+            rate=_EDGE_DARWIN_RATE, pitch=_EDGE_DARWIN_PITCH
+        ).stream():
+            if chunk["type"] == "audio":
+                buf.write(chunk["data"])
+        return buf.getvalue()
+
+    try:
+        mp3_bytes = asyncio.run(_gen())
+        if not mp3_bytes:
+            return jsonify({"error": "Edge TTS no generó audio"}), 500
+    except Exception as e:
+        return jsonify({"error": f"Edge TTS falló: {e}"}), 500
+
+    # 2. Convertir MP3 → WAV
+    try:
+        wav_bytes = _mp3_to_wav_bytes(mp3_bytes)
+    except Exception as e:
+        return jsonify({"error": f"Conversión MP3→WAV falló: {e}"}), 500
+
+    # 3. Aplicar WORLD vocoder con el modelo de Darwin
+    try:
+        patched = _patch_world(wav_bytes, _DARWIN_WORLD_CFG, voice_name="darwin-piper-patch")
+    except Exception as e:
+        return jsonify({"error": f"WORLD patch falló: {e}"}), 500
+
+    return Response(patched, mimetype="audio/wav",
+                    headers={"Cache-Control": "no-store"})
+
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
