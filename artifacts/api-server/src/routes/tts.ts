@@ -230,6 +230,42 @@ ttsRouter.get("/tts/voices", (_req, res) => {
   });
 });
 
+// ── Helpers para texto ilimitado ──────────────────────────────────────────────
+const MAX_CHUNK_CHARS = 250;
+
+function splitSentences(text: string): string[] {
+  const raw = text.split(/(?<=[.!?;:])\s+/);
+  const chunks: string[] = [];
+  let current = "";
+  for (const piece of raw) {
+    const candidate = current ? `${current} ${piece}` : piece;
+    if (candidate.length > MAX_CHUNK_CHARS) {
+      if (current) chunks.push(current.trim());
+      current = piece.length > MAX_CHUNK_CHARS
+        ? piece.slice(0, MAX_CHUNK_CHARS)
+        : piece;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.filter(Boolean);
+}
+
+function concatWavBuffers(bufs: Buffer[]): Buffer {
+  if (bufs.length === 0) throw new Error("Sin buffers WAV");
+  if (bufs.length === 1) return bufs[0];
+  const hdr       = bufs[0].slice(0, 44);
+  const pcmParts  = bufs.map(b => b.slice(44));
+  const totalPcm  = Buffer.concat(pcmParts);
+  const out       = Buffer.alloc(44 + totalPcm.length);
+  hdr.copy(out, 0);
+  out.writeUInt32LE(totalPcm.length + 36, 4);
+  out.writeUInt32LE(totalPcm.length, 40);
+  totalPcm.copy(out, 44);
+  return out;
+}
+
 // ── POST /tts/generate ────────────────────────────────────────────────────────
 ttsRouter.post("/tts/generate", async (req, res) => {
   const { texto, voiceId = "gonzalo-co" } = req.body as { texto?: string; voiceId?: string };
@@ -237,14 +273,11 @@ ttsRouter.post("/tts/generate", async (req, res) => {
   if (!texto || typeof texto !== "string" || texto.trim().length === 0) {
     res.status(400).json({ error: "El campo 'texto' es requerido" }); return;
   }
-  if (texto.length > 5000) {
-    res.status(400).json({ error: "El texto no puede superar 5000 caracteres" }); return;
-  }
 
   const voz  = VOICES[voiceId] ?? VOICES["gonzalo-co"];
   const text = texto.trim();
 
-  // ── Diever ────────────────────────────────────────────────────────────────
+  // ── XTTS clonado — chunks ilimitados ──────────────────────────────────────
   if (voz.cloned) {
     const cachedText = instantClonedText(text) ?? text;
     const key    = cacheKey(cachedText, voiceId);
@@ -256,7 +289,20 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       return;
     }
     try {
-      const audio = await askDaemon(text, voz.refAudio ?? DIEVER_REF);
+      const chunks   = splitSentences(cachedText);
+      const parts: Buffer[] = [];
+      for (const chunk of chunks) {
+        const chunkKey    = cacheKey(chunk, voiceId);
+        const chunkCached = cacheGet(chunkKey);
+        if (chunkCached) {
+          parts.push(chunkCached);
+        } else {
+          const audio = await askDaemon(chunk, voz.refAudio ?? DIEVER_REF);
+          cacheSet(chunkKey, audio);
+          parts.push(audio);
+        }
+      }
+      const audio = concatWavBuffers(parts);
       cacheSet(key, audio);
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("X-Cache", "MISS");
