@@ -2,7 +2,8 @@ import { Router }                  from "express";
 import { spawn, ChildProcess }    from "child_process";
 import { randomUUID, createHash } from "crypto";
 import { join }                   from "path";
-import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync,
+         readdirSync, statSync, utimesSync }                              from "fs";
 
 const ttsRouter = Router();
 
@@ -15,19 +16,49 @@ const NEXUS_ULTRA_CONFIG = "/home/runner/workspace/attached_assets/NEXUS_ULTRA_F
 const NEXUS_PIPER_PATCH = "nexus-piper-patch";
 const DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
 
-// ── Caché en disco persistente (sobrevive reinicios) ──────────────────────────
-const CACHE_DIR = "/home/runner/workspace/tts_cache";
+// ── Caché LRU en disco — autolimpiante, nunca se llena ───────────────────────
+const CACHE_DIR     = "/home/runner/workspace/tts_cache";
+const CACHE_MAX_MB  = 400;                          // límite en MB
+const CACHE_MAX_B   = CACHE_MAX_MB * 1024 * 1024;  // en bytes
 mkdirSync(CACHE_DIR, { recursive: true });
 
 function cacheKey(texto: string, voiceId: string) {
   return createHash("sha1").update(`${voiceId}::${texto}`).digest("hex");
 }
+
 function cacheGet(key: string): Buffer | null {
   const p = join(CACHE_DIR, `${key}.wav`);
-  return existsSync(p) ? readFileSync(p) : null;
+  if (!existsSync(p)) return null;
+  const now = new Date();
+  try { utimesSync(p, now, now); } catch { /* ignorar */ }
+  return readFileSync(p);
 }
+
 function cacheSet(key: string, data: Buffer) {
   writeFileSync(join(CACHE_DIR, `${key}.wav`), data);
+  setImmediate(evictLRU);
+}
+
+function evictLRU() {
+  try {
+    const files = readdirSync(CACHE_DIR)
+      .filter(f => f.endsWith(".wav"))
+      .map(f => {
+        const full = join(CACHE_DIR, f);
+        const st   = statSync(full);
+        return { full, atime: st.atimeMs, size: st.size };
+      })
+      .sort((a, b) => a.atime - b.atime);
+
+    let total = files.reduce((s, f) => s + f.size, 0);
+    if (total <= CACHE_MAX_B) return;
+
+    for (const file of files) {
+      if (total <= CACHE_MAX_B * 0.8) break;
+      try { unlinkSync(file.full); total -= file.size; } catch { /* ignorar */ }
+    }
+    console.log(`[CACHE] LRU eviction: ${Math.round(total / 1024 / 1024)}MB libre`);
+  } catch { /* ignorar */ }
 }
 
 function instantClonedText(texto: string) {
