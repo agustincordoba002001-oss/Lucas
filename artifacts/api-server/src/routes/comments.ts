@@ -14,7 +14,7 @@ db.exec(`
     id      TEXT PRIMARY KEY,
     autor   TEXT NOT NULL,
     texto   TEXT NOT NULL,
-    voiceId TEXT NOT NULL DEFAULT 'darwin-piper-patch',
+    voiceId TEXT NOT NULL DEFAULT 'darwin',
     audio   BLOB,
     ts      INTEGER NOT NULL DEFAULT (unixepoch())
   );
@@ -24,7 +24,7 @@ db.exec(`
 
 // Agregar columnas nuevas si la tabla ya existía sin ellas
 try { db.exec("ALTER TABLE comentarios ADD COLUMN audio BLOB"); }       catch { /* ya existe */ }
-try { db.exec("ALTER TABLE comentarios ADD COLUMN voiceId TEXT NOT NULL DEFAULT 'darwin-piper-patch'"); } catch { /* ya existe */ }
+try { db.exec("ALTER TABLE comentarios ADD COLUMN voiceId TEXT NOT NULL DEFAULT 'darwin'"); } catch { /* ya existe */ }
 
 // Migrar desde JSON si la tabla está vacía
 const row = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
@@ -53,7 +53,7 @@ commentsRouter.get("/comments", (req, res) => {
 // ── GET /comments/:id/audio — sirve el audio de la semilla (genera si falta) ─
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id     = req.params.id;
-  const vId    = (req.query.voiceId as string | undefined) ?? "darwin-piper-patch";
+  const vId    = (req.query.voiceId as string | undefined) ?? "darwin";
   const record = db.prepare("SELECT texto, voiceId, audio FROM comentarios WHERE id = ?").get(id) as
     { texto: string; voiceId: string; audio: Buffer | null } | undefined;
 

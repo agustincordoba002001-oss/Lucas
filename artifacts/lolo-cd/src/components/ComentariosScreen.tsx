@@ -7,7 +7,7 @@ interface PageResp   { items: Comentario[]; nextCursor: number | null; }
 
 interface Props { voiceId?: string; }
 
-export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Props) {
+export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
   const [comentarios, setComentarios]     = useState<Comentario[]>([]);
   const [nextCursor, setNextCursor]       = useState<number | null>(null);
   const [cargando, setCargando]           = useState(false);
