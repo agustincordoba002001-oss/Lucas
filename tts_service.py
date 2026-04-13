@@ -31,6 +31,10 @@ _PATCHED_VOICES = {
         "base": "davefx-es",
         "ref": "/home/runner/workspace/attached_assets/clon_lolo_directo_(6)_1776048168673.wav",
     },
+    "darwin-piper-patch": {
+        "base": "davefx-es",
+        "ref": "/home/runner/workspace/attached_assets/clon_lolo_directo_(6)_1776048168673.wav",
+    },
 }
 _pitch_cache = {}
 
