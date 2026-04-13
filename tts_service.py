@@ -2,7 +2,7 @@
 Servicio TTS persistente — edge_tts + Piper + conversión de voz WORLD.
 Puerto: 5000
 """
-import io, asyncio, wave, warnings, os, re
+import io, asyncio, wave, warnings, os
 warnings.filterwarnings("ignore")
 
 import edge_tts
@@ -252,171 +252,6 @@ def _patch_world(wav_bytes, cfg: dict, voice_name: str = ""):
     sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
     return out.getvalue()
 
-# ── Risa humana — detección y síntesis ───────────────────────────────────────
-# Detecta: jaja, jajaja, jeje, jihi, haha, JAJA, JaJaJa, jjajajaja, etc.
-_LAUGH_RE = re.compile(
-    r'[jJ]+[aAeEiIoO]+(?:[jJ]+[aAeEiIoO]+)*[jJ]*'        # ja/je/ji/jo variants (jaja, jeje, jiji)
-    r'|(?:[hH]+[aAeEiI]+){2,}[hH]*',                      # ha/he/hi — mínimo 2 sílabas (haha, hehe)
-    re.IGNORECASE,
-)
-
-def _split_laugh_segments(text: str):
-    """Devuelve lista de (segmento, es_risa)."""
-    result, last = [], 0
-    for m in _LAUGH_RE.finditer(text):
-        before = text[last:m.start()].strip()
-        if before:
-            result.append((before, False))
-        result.append((m.group(), True))
-        last = m.end()
-    tail = text[last:].strip()
-    if tail:
-        result.append((tail, False))
-    return result if result else [(text, False)]
-
-def _laugh_count(laugh_str: str) -> int:
-    """Cuántos pulsos de risa — mínimo 2, máximo 8."""
-    units = re.findall(r'[jJhH]+[aAeEiIoO]+', laugh_str)
-    return max(2, min(len(units), 8))
-
-def _concat_wav_bytes(parts: list) -> bytes:
-    """Concatena múltiples WAV en uno solo (mismo SR/canales)."""
-    if not parts:
-        return b""
-    if len(parts) == 1:
-        return parts[0]
-    pcm = b""
-    header = None
-    for wb in parts:
-        with wave.open(io.BytesIO(wb), "rb") as wf:
-            if header is None:
-                header = (wf.getnchannels(), wf.getsampwidth(), wf.getframerate())
-            pcm += wf.readframes(wf.getnframes())
-    out = io.BytesIO()
-    with wave.open(out, "wb") as wf:
-        wf.setnchannels(header[0])
-        wf.setsampwidth(header[1])
-        wf.setframerate(header[2])
-        wf.writeframes(pcm)
-    return out.getvalue()
-
-def _gen_laugh_audio(n_ja: int, model, cfg: dict, voice_name: str):
-    """
-    Risa humana real con timbre de Darwin — sintetizada directamente con WORLD vocoder.
-
-    Estrategia:
-      - No usa TTS como base (eso es lo que lo hacía sonar robótico).
-      - Construye f0, sp (envolvente espectral de Darwin) y ap (aperiodicidad alta = aspirado)
-        frame por frame y los sintetiza con pw.synthesize.
-      - Cada "ja" es un burst con: onset aspirado → vocal sonora → cola soplada.
-      - El contorno de pitch baja dentro de cada burst y globalmente a lo largo de la risa.
-      - La amplitud decrece levemente burst a burst (la risa se apaga).
-    """
-    FRAME_PERIOD = 5.0   # ms — estándar de WORLD
-
-    feats = _load_world_features_multi(cfg["refs"], voice_name) if "refs" in cfg else _load_world_features(cfg["ref"])
-    ref_f0       = feats["f0_median"]          # ~174 Hz para Darwin
-    mean_log_sp  = feats["mean_log_sp"]        # (513,) — envolvente espectral
-    n_sp_bins    = len(mean_log_sp)            # 513
-
-    darwin_sp_lin = np.exp(mean_log_sp)
-    darwin_sp_lin = darwin_sp_lin / (np.mean(darwin_sp_lin) + 1e-10)
-
-    # Realce de formantes vocálicos para "a" — F1 ~800 Hz, F2 ~1200 Hz a 16kHz
-    freqs_norm  = np.linspace(0, 1, n_sp_bins)
-    laugh_shape = (
-        1.0
-        + 0.50 * np.exp(-((freqs_norm - 0.100)**2) / 0.004)   # F1
-        + 0.35 * np.exp(-((freqs_norm - 0.150)**2) / 0.006)   # F2
-        + 0.15 * np.exp(-((freqs_norm - 0.040)**2) / 0.003)   # sub-bajo (cuerpo)
-    )
-    laugh_sp = darwin_sp_lin * laugh_shape   # (513,)
-
-    rng = np.random.default_rng()
-
-    # Duración en frames de cada burst y pausa
-    burst_ms  = rng.integers(200, 260)        # ms por burst (varía un poco)
-    gap_ms    = 60                             # ms entre bursts
-    burst_f   = int(burst_ms  / FRAME_PERIOD)
-    gap_f     = int(gap_ms    / FRAME_PERIOD)
-    total_f   = n_ja * (burst_f + gap_f) + 4  # frames totales
-
-    f0_all = np.zeros(total_f,                 dtype=np.float64)
-    sp_all = np.ones( (total_f, n_sp_bins),    dtype=np.float64) * 1e-10
-    ap_all = np.ones( (total_f, n_sp_bins),    dtype=np.float64) * 0.98  # silencio = todo aperiódico
-
-    for i in range(n_ja):
-        fs = i * (burst_f + gap_f)   # frame de inicio del burst
-        fe = fs + burst_f
-
-        # ── Contorno de pitch ──────────────────────────────────────────────
-        # Global: parte 18 % sobre el f0 de referencia, baja ~20 % al final
-        progress  = i / max(n_ja - 1, 1)
-        f0_base   = ref_f0 * (1.18 - 0.22 * progress)
-        f0_base  += rng.uniform(-6, 6)    # microvariación natural
-
-        t_loc = np.linspace(0, 1, burst_f)
-        # Local: dentro del burst el pitch baja 12 % y tiene un leve vibrato
-        f0_burst = f0_base * (1.0 + 0.12 * (1 - t_loc) + 0.018 * np.sin(2 * np.pi * 5.5 * t_loc))
-
-        # ── Máscara voiced/unvoiced ────────────────────────────────────────
-        onset_unvoiced  = max(2, int(burst_f * 0.08))   # aspiración al inicio
-        offset_unvoiced = max(2, int(burst_f * 0.18))   # aspiración al final
-        voiced_mask = np.zeros(burst_f, dtype=bool)
-        voiced_mask[onset_unvoiced : burst_f - offset_unvoiced] = True
-
-        f0_all[fs:fe] = np.where(voiced_mask, f0_burst, 0.0)
-
-        # ── Envolvente de amplitud del burst (ataque rápido, caída exponencial) ──
-        att_f = max(2, int(burst_f * 0.07))
-        dec_f = burst_f - att_f
-        amp_env = np.concatenate([
-            np.linspace(0, 1, att_f) ** 0.5,
-            np.exp(-3.0 * np.linspace(0, 1, dec_f))
-        ])[:burst_f]
-
-        amp_scale = 1.0 - 0.055 * i     # la risa se va apagando
-
-        # ── Envolvente espectral ───────────────────────────────────────────
-        sp_frame = laugh_sp * amp_scale
-        sp_all[fs:fe] = amp_env[:, np.newaxis] * sp_frame[np.newaxis, :] + 1e-10
-
-        # ── Aperiodicidad: más soplado en onset/offset, más periódico en pico ──
-        # ap ≈ 0 → puramente periódico (tono puro)
-        # ap ≈ 1 → puramente aperiódico (ruido)
-        ap_voiced  = 0.28    # pico del burst — algo soplado (voz natural)
-        ap_unvoic  = 0.92    # onset/offset — aspirado
-        ap_env = np.where(voiced_mask, ap_voiced, ap_unvoic)
-        # Transición suave
-        ap_env = np.convolve(ap_env, np.hanning(5) / np.hanning(5).sum(), mode='same')
-        ap_all[fs:fe] = ap_env[:, np.newaxis] * np.ones((1, n_sp_bins))
-
-        # ── Pausa entre bursts — aspiración suave ─────────────────────────
-        if i < n_ja - 1:
-            gs = fe
-            ge = gs + gap_f
-            if ge <= total_f:
-                # sp muy pequeño con decaimiento
-                breath_env = np.exp(-6 * np.linspace(0, 1, gap_f)) * 0.04 * amp_scale
-                sp_all[gs:ge] = breath_env[:, np.newaxis] * darwin_sp_lin[np.newaxis, :] + 1e-10
-                ap_all[gs:ge] = 0.97   # casi todo ruido (aspiración)
-
-    sp_all = np.clip(sp_all, 1e-10, None)
-    ap_all = np.clip(ap_all, 0.0, 1.0 - 1e-6)
-
-    y_out = pw.synthesize(f0_all, sp_all, ap_all, WORLD_SR, frame_period=FRAME_PERIOD).astype(np.float32)
-
-    # Micro-ruido de habitación (muy sutil)
-    y_out += rng.standard_normal(len(y_out)).astype(np.float32) * 0.006
-
-    peak = float(np.max(np.abs(y_out)))
-    if peak > 1e-6:
-        y_out = (y_out / peak) * 0.87
-
-    out = io.BytesIO()
-    sf.write(out, y_out, WORLD_SR, format="WAV", subtype="PCM_16")
-    return out.getvalue()
-
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -466,7 +301,7 @@ def piper():
     return Response(audio, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
-# ── Piper Patch (pitch y/o world) — con detección de risas ───────────────────
+# ── Piper Patch (pitch y/o world) ─────────────────────────────────────────────
 @app.post("/piper-patch")
 def piper_patch():
     d     = request.get_json(force=True)
@@ -478,47 +313,27 @@ def piper_patch():
     cfg = _PATCHED_VOICES.get(voice)
     if not cfg:
         return jsonify({"error": f"Parche Piper '{voice}' no disponible"}), 404
-
-    # Darwin usa "refs" (multi-archivo); otras voces usan "ref"
-    ref_path = cfg.get("ref")
-    if ref_path and not os.path.exists(ref_path):
+    if not os.path.exists(cfg["ref"]):
         return jsonify({"error": "Audio de referencia no disponible"}), 404
 
     model = _piper.get(cfg["base"])
     if not model:
         return jsonify({"error": f"Base Piper '{cfg['base']}' no disponible"}), 404
 
-    mode     = cfg.get("mode", "pitch")
-    segments = _split_laugh_segments(text)
-
-    def _apply_patch(wav_bytes):
-        if mode == "world":
-            return _patch_world(wav_bytes, cfg, voice_name=voice)
-        return _patch_pitch(wav_bytes, ref_path)
+    audio = _wav_from_piper(model, text)
+    if not audio:
+        return jsonify({"error": "Sin audio base generado"}), 500
 
     try:
-        wav_parts = []
-        for seg, is_laugh in segments:
-            if not seg:
-                continue
-            if is_laugh and mode == "world":
-                # Risa humana con voz Darwin
-                n_ja = _laugh_count(seg)
-                laugh_wav = _gen_laugh_audio(n_ja, model, cfg, voice)
-                if laugh_wav:
-                    wav_parts.append(laugh_wav)
-            else:
-                base = _wav_from_piper(model, seg)
-                if base:
-                    wav_parts.append(_apply_patch(base))
+        mode = cfg.get("mode", "pitch")
+        if mode == "world":
+            patched = _patch_world(audio, cfg, voice_name=voice)
+        else:
+            patched = _patch_pitch(audio, cfg["ref"])
     except Exception as e:
-        return jsonify({"error": f"Error generando audio: {e}"}), 500
+        return jsonify({"error": f"Error aplicando parche: {e}"}), 500
 
-    if not wav_parts:
-        return jsonify({"error": "Sin audio generado"}), 500
-
-    final = _concat_wav_bytes(wav_parts)
-    return Response(final, mimetype="audio/wav",
+    return Response(patched, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
 if __name__ == "__main__":
