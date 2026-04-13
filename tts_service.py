@@ -1,5 +1,6 @@
 """
 Servicio TTS persistente — edge_tts + Piper + conversión de voz WORLD.
+Motor Darwin: conversión de voz frame a frame por cuantización vectorial.
 Puerto: 5000
 """
 import io, asyncio, wave, warnings, os
@@ -252,17 +253,172 @@ def _patch_world(wav_bytes, cfg: dict, voice_name: str = ""):
     sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
     return out.getvalue()
 
-# ── Edge → Darwin (Edge TTS + WORLD vocoder de Darwin) ───────────────────────
-# Voz base Edge: hombre español latinoamericano de pitch similar a Darwin
+# ── Motor Darwin VQ — conversión de voz frame a frame ─────────────────────────
+#
+#  En lugar de aplicar una ratio espectral global (promedio),
+#  este motor mapea CADA FRAME del audio fuente al frame de Darwin
+#  más parecido en el espacio espectral (vecino más cercano).
+#  El resultado usa el timbre exacto de Darwin, fonema a fonema.
+#
+#  Velocidad total ≈ Edge(~0.3s) + análisis WORLD(~0.2s) + NN(~0.05s) + síntesis(~0.1s)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MOTOR_REFS_LOG_SP = None   # (M, 513) float32 — frames de Darwin en espacio log-SP
+_MOTOR_REFS_NORMS  = None   # (M,)     float32 — ||ref||² pre-calculado
+_MOTOR_MEAN_AP     = None   # (513,)   float64 — aperiodicidad media de Darwin
+_MOTOR_F0_LOG_MEAN = None   # float — log(f0) medio de Darwin
+_MOTOR_F0_LOG_STD  = None   # float — log(f0) std de Darwin
+_MOTOR_READY       = False
+
+
+def _build_darwin_motor(paths: list, stride: int = 20) -> None:
+    """
+    Extrae frames espectrales de los archivos de referencia de Darwin
+    y construye el banco de vecinos para conversión frame a frame.
+
+    stride=20 → toma 1 frame de cada 20 (cada 100ms).
+    Con ~163s de audio Darwin a 5ms/frame = 32600 frames → ~1630 frames de referencia.
+    """
+    global _MOTOR_REFS_LOG_SP, _MOTOR_REFS_NORMS
+    global _MOTOR_MEAN_AP, _MOTOR_F0_LOG_MEAN, _MOTOR_F0_LOG_STD, _MOTOR_READY
+
+    all_log_sp_sub, all_ap_sub, all_f0_voiced = [], [], []
+
+    for p in paths:
+        if not os.path.exists(p):
+            continue
+        print(f"[MOTOR-DARWIN] Analizando: {os.path.basename(p)}", flush=True)
+        try:
+            y, _ = librosa.load(p, sr=WORLD_SR, duration=120.0)
+            y = y.astype(np.float64)
+            if len(y) < WORLD_SR * 0.5:
+                continue
+            f0, t  = pw.dio(y, WORLD_SR)
+            f0     = pw.stonemask(y, f0, t, WORLD_SR)
+            sp     = pw.cheaptrick(y, f0, t, WORLD_SR)
+            ap     = pw.d4c(y, f0, t, WORLD_SR)
+            log_sp = np.log(sp + 1e-10).astype(np.float32)
+
+            all_log_sp_sub.append(log_sp[::stride])
+            all_ap_sub.append(ap[::stride])
+            voiced_f0 = f0[f0 > 0]
+            if len(voiced_f0) > 0:
+                all_f0_voiced.append(voiced_f0)
+        except Exception as e:
+            print(f"[MOTOR-DARWIN] Error en {p}: {e}", flush=True)
+
+    if not all_log_sp_sub:
+        print("[MOTOR-DARWIN] Sin referencias — motor no disponible", flush=True)
+        return
+
+    refs = np.vstack(all_log_sp_sub).astype(np.float32)           # (M, 513)
+    ap_all = np.vstack(all_ap_sub).astype(np.float64)             # (M, 513)
+
+    all_f0_cat = np.concatenate(all_f0_voiced)
+    log_f0     = np.log(np.maximum(all_f0_cat, 1.0))
+
+    _MOTOR_REFS_LOG_SP = refs
+    _MOTOR_REFS_NORMS  = np.sum(refs ** 2, axis=1)                # (M,)
+    _MOTOR_MEAN_AP     = np.mean(ap_all, axis=0)                  # (513,) media Darwin
+    _MOTOR_F0_LOG_MEAN = float(np.mean(log_f0))
+    _MOTOR_F0_LOG_STD  = float(np.std(log_f0)) or 0.01
+    _MOTOR_READY       = True
+
+    print(
+        f"[MOTOR-DARWIN] Listo ✓ — {len(refs)} frames de referencia, "
+        f"f0_median≈{float(np.exp(_MOTOR_F0_LOG_MEAN)):.1f} Hz",
+        flush=True,
+    )
+
+
+def _convert_darwin_motor(wav_bytes: bytes) -> bytes:
+    """
+    Motor Darwin VQ: convierte cada frame espectral del audio fuente
+    al frame de Darwin más cercano. Usa la aperiodicidad media de Darwin
+    (evita calcular d4c, ~200ms menos).
+    """
+    if not _MOTOR_READY:
+        return wav_bytes
+
+    y_src, sr_src = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
+    if y_src.ndim > 1:
+        y_src = y_src.mean(axis=1)
+
+    y_up = (librosa.resample(y_src, orig_sr=sr_src, target_sr=WORLD_SR)
+            if sr_src != WORLD_SR else y_src.copy())
+    y_up = y_up.astype(np.float64)
+
+    # ── Análisis WORLD fuente (sin d4c para velocidad) ────────────────────────
+    f0_src, t_src = pw.dio(y_up, WORLD_SR)
+    f0_src        = pw.stonemask(y_up, f0_src, t_src, WORLD_SR)
+    sp_src        = pw.cheaptrick(y_up, f0_src, t_src, WORLD_SR)
+
+    n_frames = sp_src.shape[0]
+
+    # ── Búsqueda de vecino más cercano (frame a frame) ────────────────────────
+    log_sp_src = np.log(sp_src + 1e-10).astype(np.float32)        # (N, 513)
+
+    refs       = _MOTOR_REFS_LOG_SP                                # (M, 513)
+    ref_norms  = _MOTOR_REFS_NORMS                                 # (M,)
+    src_norms  = np.sum(log_sp_src ** 2, axis=1)                  # (N,)
+
+    # dist² = ||src||² + ||ref||² - 2·src·refᵀ — cálculo vectorizado (BLAS)
+    dot     = log_sp_src @ refs.T                                  # (N, M)
+    dists   = src_norms[:, None] + ref_norms[None] - 2.0 * dot    # (N, M)
+    nearest = np.argmin(dists, axis=1)                             # (N,)
+
+    # SP convertido: el frame real de Darwin más parecido a cada frame fuente
+    sp_conv = np.exp(refs[nearest]).astype(np.float64)             # (N, 513)
+
+    # ── Conversión de pitch (transformación afín en log-F0) ───────────────────
+    voiced  = f0_src > 0
+    f0_conv = f0_src.copy()
+    if voiced.any():
+        log_f0_src = np.log(np.maximum(f0_src[voiced], 1.0))
+        src_lmean  = float(np.mean(log_f0_src))
+        src_lstd   = float(np.std(log_f0_src)) or 0.01
+        # Preserva la entonación (forma) pero la traslada al rango de Darwin
+        f0_conv[voiced] = np.exp(
+            _MOTOR_F0_LOG_MEAN
+            + _MOTOR_F0_LOG_STD * (log_f0_src - src_lmean) / src_lstd
+        )
+        f0_conv[voiced] = np.clip(f0_conv[voiced], 60.0, 520.0)
+
+    # ── Aperiodicidad de Darwin (media del corpus, sin d4c al vuelo) ──────────
+    ap_darwin = np.tile(_MOTOR_MEAN_AP, (n_frames, 1))             # (N, 513)
+
+    # ── Síntesis WORLD ────────────────────────────────────────────────────────
+    y_out = pw.synthesize(f0_conv, sp_conv, ap_darwin, WORLD_SR).astype(np.float32)
+
+    if WORLD_SR != sr_src:
+        y_out = librosa.resample(y_out, orig_sr=WORLD_SR, target_sr=sr_src)
+
+    peak = float(np.max(np.abs(y_out))) if len(y_out) else 0.0
+    if peak > 0:
+        y_out = (y_out / peak) * 0.92
+
+    out = io.BytesIO()
+    sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
+    return out.getvalue()
+
+
+# Construir el motor al arrancar (en hilo aparte para no bloquear la API)
+import threading as _threading
+
+def _init_motor():
+    try:
+        _build_darwin_motor(_DARWIN_REFS, stride=20)
+    except Exception as e:
+        print(f"[MOTOR-DARWIN] Error al construir: {e}", flush=True)
+
+_threading.Thread(target=_init_motor, daemon=True).start()
+
+
+# ── Edge → Darwin (Motor Darwin VQ) ──────────────────────────────────────────
 _EDGE_DARWIN_BASE  = "es-MX-JorgeNeural"
 _EDGE_DARWIN_PITCH = "+0Hz"
 _EDGE_DARWIN_RATE  = "+0%"
 
-# Config Darwin (igual que darwin-piper-patch pero sin "base" Piper)
-_DARWIN_WORLD_CFG = {
-    "refs": _DARWIN_REFS,
-    "mode": "world",
-}
 
 def _mp3_to_wav_bytes(mp3_bytes: bytes, target_sr: int = WORLD_SR) -> bytes:
     """Convierte MP3 (bytes) a WAV PCM_16 (bytes) usando librosa."""
@@ -271,20 +427,24 @@ def _mp3_to_wav_bytes(mp3_bytes: bytes, target_sr: int = WORLD_SR) -> bytes:
     sf.write(out, y, target_sr, format="WAV", subtype="PCM_16")
     return out.getvalue()
 
+
 @app.post("/edge-darwin")
 def edge_darwin():
-    """Edge TTS → WORLD Darwin: velocidad de Edge, timbre de Darwin."""
+    """
+    Motor Darwin VQ: Edge TTS → mapeo espectral frame a frame a la voz de Darwin.
+    Usa vecino más cercano en espacio log-SP para transferencia de timbre exacta.
+    """
     d    = request.get_json(force=True)
     text = (d.get("texto") or "").strip()
     if not text:
         return jsonify({"error": "texto requerido"}), 400
 
-    # 1. Generar con Edge TTS (MP3)
+    # 1. Edge TTS → MP3
     async def _gen():
         buf = io.BytesIO()
         async for chunk in edge_tts.Communicate(
             text, _EDGE_DARWIN_BASE,
-            rate=_EDGE_DARWIN_RATE, pitch=_EDGE_DARWIN_PITCH
+            rate=_EDGE_DARWIN_RATE, pitch=_EDGE_DARWIN_PITCH,
         ).stream():
             if chunk["type"] == "audio":
                 buf.write(chunk["data"])
@@ -297,19 +457,22 @@ def edge_darwin():
     except Exception as e:
         return jsonify({"error": f"Edge TTS falló: {e}"}), 500
 
-    # 2. Convertir MP3 → WAV
+    # 2. MP3 → WAV
     try:
         wav_bytes = _mp3_to_wav_bytes(mp3_bytes)
     except Exception as e:
         return jsonify({"error": f"Conversión MP3→WAV falló: {e}"}), 500
 
-    # 3. Aplicar WORLD vocoder con el modelo de Darwin
-    try:
-        patched = _patch_world(wav_bytes, _DARWIN_WORLD_CFG, voice_name="darwin-piper-patch")
-    except Exception as e:
-        return jsonify({"error": f"WORLD patch falló: {e}"}), 500
+    # 3. Motor Darwin VQ: mapeo frame a frame
+    if _MOTOR_READY:
+        try:
+            wav_bytes = _convert_darwin_motor(wav_bytes)
+        except Exception as e:
+            print(f"[MOTOR-DARWIN] Conversión falló, devolviendo audio sin convertir: {e}", flush=True)
+    else:
+        print("[MOTOR-DARWIN] Aún inicializando, devolviendo Edge sin convertir", flush=True)
 
-    return Response(patched, mimetype="audio/wav",
+    return Response(wav_bytes, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
 # ── Health ────────────────────────────────────────────────────────────────────
