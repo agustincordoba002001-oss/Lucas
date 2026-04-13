@@ -197,10 +197,7 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: 24 }}>
-          <ComentariosScreen
-            postId="demo"
-            voiceId={voiceId}
-          />
+          <ComentariosScreen voiceId={voiceId} />
         </div>
       </div>
     </div>
