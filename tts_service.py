@@ -2,7 +2,7 @@
 Servicio TTS persistente — edge_tts + Piper + conversión de voz WORLD.
 Puerto: 5000
 """
-import io, asyncio, wave, warnings, os
+import io, asyncio, wave, warnings, os, re
 warnings.filterwarnings("ignore")
 
 import edge_tts
@@ -252,6 +252,128 @@ def _patch_world(wav_bytes, cfg: dict, voice_name: str = ""):
     sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
     return out.getvalue()
 
+# ── Risa humana — detección y síntesis ───────────────────────────────────────
+# Detecta: jaja, jajaja, jjaj, JAJA, JaJaJa, jjajajaja, etc.
+_LAUGH_RE = re.compile(r'[jJ]+[aA]+(?:[jJ]*[aA]+)*[jJ]*', re.IGNORECASE)
+
+def _split_laugh_segments(text: str):
+    """Devuelve lista de (segmento, es_risa)."""
+    result, last = [], 0
+    for m in _LAUGH_RE.finditer(text):
+        before = text[last:m.start()].strip()
+        if before:
+            result.append((before, False))
+        result.append((m.group(), True))
+        last = m.end()
+    tail = text[last:].strip()
+    if tail:
+        result.append((tail, False))
+    return result if result else [(text, False)]
+
+def _laugh_count(laugh_str: str) -> int:
+    """Cuántos 'ja' tiene la risa — mínimo 2, máximo 7."""
+    units = re.findall(r'[jJ]+[aA]+', laugh_str)
+    return max(2, min(len(units), 7))
+
+def _concat_wav_bytes(parts: list) -> bytes:
+    """Concatena múltiples WAV en uno solo (mismo SR/canales)."""
+    if not parts:
+        return b""
+    if len(parts) == 1:
+        return parts[0]
+    pcm = b""
+    header = None
+    for wb in parts:
+        with wave.open(io.BytesIO(wb), "rb") as wf:
+            if header is None:
+                header = (wf.getnchannels(), wf.getsampwidth(), wf.getframerate())
+            pcm += wf.readframes(wf.getnframes())
+    out = io.BytesIO()
+    with wave.open(out, "wb") as wf:
+        wf.setnchannels(header[0])
+        wf.setsampwidth(header[1])
+        wf.setframerate(header[2])
+        wf.writeframes(pcm)
+    return out.getvalue()
+
+def _gen_laugh_audio(n_ja: int, model, cfg: dict, voice_name: str):
+    """
+    Risa tipo humana con voz Darwin:
+    1. Piper sintetiza "ja, ja, ja ..." (n_ja veces)
+    2. WORLD vocoder convierte timbre + pitch a Darwin
+    3. Modula pitch: contorno de risa (sube inicio, baja final)
+    4. Modula amplitud: pulsos rítmicos + soplo de aire
+    """
+    laugh_text = ", ".join(["ja"] * n_ja)
+    wav_bytes = _wav_from_piper(model, laugh_text)
+    if not wav_bytes:
+        return None
+
+    y_src, sr_src = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
+    if y_src.ndim > 1:
+        y_src = y_src.mean(axis=1)
+
+    y_up = librosa.resample(y_src, orig_sr=sr_src, target_sr=WORLD_SR) if sr_src != WORLD_SR else y_src.copy()
+    y_up = y_up.astype(np.float64)
+
+    feats = _load_world_features_multi(cfg["refs"], voice_name) if "refs" in cfg else _load_world_features(cfg["ref"])
+
+    f0_src, t_src = pw.dio(y_up, WORLD_SR)
+    f0_src = pw.stonemask(y_up, f0_src, t_src, WORLD_SR)
+    sp_src = pw.cheaptrick(y_up, f0_src, t_src, WORLD_SR)
+    ap_src = pw.d4c(y_up, f0_src, t_src, WORLD_SR)
+
+    voiced  = f0_src > 0
+    f0_conv = f0_src.copy()
+    if voiced.any():
+        src_median = float(np.median(f0_src[voiced]))
+        ref_median = feats["f0_median"]
+        if src_median > 0 and ref_median > 0:
+            scale = float(np.clip(ref_median / src_median, 0.5, 2.0))
+            f0_conv[voiced] = f0_src[voiced] * scale
+
+    # Contorno de risa: pico al 25%, caída suave + oscilación por "ja"
+    n_frames = len(f0_conv)
+    t_norm   = np.linspace(0, 1, n_frames)
+    global_env = 1.0 + 0.20 * np.exp(-((t_norm - 0.22)**2) / 0.04) - 0.14 * t_norm
+    osc        = 0.07 * np.sin(n_ja * 2 * np.pi * t_norm + 0.5)
+    f0_conv[voiced] = np.clip(f0_conv[voiced] * (global_env[voiced] + osc[voiced]), 60, 520)
+
+    src_mean_log_sp = np.mean(np.log(sp_src + 1e-10), axis=0)
+    sp_conv = np.clip(sp_src * np.exp(feats["mean_log_sp"] - src_mean_log_sp)[np.newaxis, :], 1e-10, None)
+
+    y_out = pw.synthesize(f0_conv, sp_conv, ap_src, WORLD_SR).astype(np.float32)
+
+    # Envolvente de amplitud: n_ja pulsos asimétricos (ataque rápido, caída lenta)
+    n_out = len(y_out)
+    t_out = np.linspace(0, 1, n_out)
+    amp   = np.zeros(n_out, dtype=np.float32)
+    for i in range(n_ja):
+        center = (i + 0.45) / n_ja
+        h      = 1.0 - 0.06 * i
+        lw, rw = 0.18 / n_ja, 0.38 / n_ja
+        amp += h * np.where(
+            t_out <= center,
+            np.exp(-((t_out - center)**2) / (lw**2 + 1e-14)),
+            np.exp(-((t_out - center)**2) / (rw**2 + 1e-14)),
+        )
+    mx = amp.max()
+    if mx > 0:
+        amp /= mx
+
+    noise  = np.random.randn(n_out).astype(np.float32) * 0.013
+    y_out  = y_out * amp + noise * amp * 0.28
+
+    if WORLD_SR != sr_src:
+        y_out = librosa.resample(y_out, orig_sr=WORLD_SR, target_sr=sr_src)
+    peak = float(np.max(np.abs(y_out))) if len(y_out) else 0
+    if peak > 0:
+        y_out = (y_out / peak) * 0.88
+
+    out = io.BytesIO()
+    sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
+    return out.getvalue()
+
 # ── Health ────────────────────────────────────────────────────────────────────
 @app.get("/health")
 def health():
@@ -301,7 +423,7 @@ def piper():
     return Response(audio, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
-# ── Piper Patch (pitch y/o world) ─────────────────────────────────────────────
+# ── Piper Patch (pitch y/o world) — con detección de risas ───────────────────
 @app.post("/piper-patch")
 def piper_patch():
     d     = request.get_json(force=True)
@@ -313,27 +435,47 @@ def piper_patch():
     cfg = _PATCHED_VOICES.get(voice)
     if not cfg:
         return jsonify({"error": f"Parche Piper '{voice}' no disponible"}), 404
-    if not os.path.exists(cfg["ref"]):
+
+    # Darwin usa "refs" (multi-archivo); otras voces usan "ref"
+    ref_path = cfg.get("ref")
+    if ref_path and not os.path.exists(ref_path):
         return jsonify({"error": "Audio de referencia no disponible"}), 404
 
     model = _piper.get(cfg["base"])
     if not model:
         return jsonify({"error": f"Base Piper '{cfg['base']}' no disponible"}), 404
 
-    audio = _wav_from_piper(model, text)
-    if not audio:
-        return jsonify({"error": "Sin audio base generado"}), 500
+    mode     = cfg.get("mode", "pitch")
+    segments = _split_laugh_segments(text)
+
+    def _apply_patch(wav_bytes):
+        if mode == "world":
+            return _patch_world(wav_bytes, cfg, voice_name=voice)
+        return _patch_pitch(wav_bytes, ref_path)
 
     try:
-        mode = cfg.get("mode", "pitch")
-        if mode == "world":
-            patched = _patch_world(audio, cfg, voice_name=voice)
-        else:
-            patched = _patch_pitch(audio, cfg["ref"])
+        wav_parts = []
+        for seg, is_laugh in segments:
+            if not seg:
+                continue
+            if is_laugh and mode == "world":
+                # Risa humana con voz Darwin
+                n_ja = _laugh_count(seg)
+                laugh_wav = _gen_laugh_audio(n_ja, model, cfg, voice)
+                if laugh_wav:
+                    wav_parts.append(laugh_wav)
+            else:
+                base = _wav_from_piper(model, seg)
+                if base:
+                    wav_parts.append(_apply_patch(base))
     except Exception as e:
-        return jsonify({"error": f"Error aplicando parche: {e}"}), 500
+        return jsonify({"error": f"Error generando audio: {e}"}), 500
 
-    return Response(patched, mimetype="audio/wav",
+    if not wav_parts:
+        return jsonify({"error": "Sin audio generado"}), 500
+
+    final = _concat_wav_bytes(wav_parts)
+    return Response(final, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
 if __name__ == "__main__":
