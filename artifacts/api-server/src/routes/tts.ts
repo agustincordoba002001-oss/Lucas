@@ -230,6 +230,41 @@ ttsRouter.get("/tts/voices", (_req, res) => {
   });
 });
 
+// ── Detección de risas ────────────────────────────────────────────────────────
+// Detecta: jaja, jajaja, jeje, jiji, haha, JAJA, JaJaJa, jjajajaja, etc.
+const LAUGH_RE = /[jJ]+[aAeEiIoO]+(?:[jJ]+[aAeEiIoO]+)*[jJ]*|(?:[hH]+[aAeEiI]+){2,}[hH]*/g;
+
+type Segment = { text: string; isLaugh: boolean };
+
+function splitLaughSegments(text: string): Segment[] {
+  const result: Segment[] = [];
+  let last = 0;
+  for (const m of text.matchAll(LAUGH_RE)) {
+    const before = text.slice(last, m.index).trim();
+    if (before) result.push({ text: before, isLaugh: false });
+    result.push({ text: m[0], isLaugh: true });
+    last = (m.index ?? 0) + m[0].length;
+  }
+  const tail = text.slice(last).trim();
+  if (tail) result.push({ text: tail, isLaugh: false });
+  return result.length ? result : [{ text, isLaugh: false }];
+}
+
+function hasLaugh(text: string): boolean {
+  LAUGH_RE.lastIndex = 0;
+  return LAUGH_RE.test(text);
+}
+
+async function genLaughAudio(laughText: string): Promise<Buffer> {
+  const upstream = await fetch(`${TTS_SERVICE}/piper-patch`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ texto: laughText, voice: "darwin-piper-patch" }),
+  });
+  if (!upstream.ok) throw new Error("Error generando risa");
+  return Buffer.from(await upstream.arrayBuffer());
+}
+
 // ── Helpers para texto ilimitado ──────────────────────────────────────────────
 const MAX_CHUNK_CHARS = 250;
 
@@ -277,7 +312,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
   const voz  = VOICES[voiceId] ?? VOICES["gonzalo-co"];
   const text = texto.trim();
 
-  // ── XTTS clonado — chunks ilimitados ──────────────────────────────────────
+  // ── XTTS clonado — chunks ilimitados con detección de risas ─────────────
   if (voz.cloned) {
     const cachedText = instantClonedText(text) ?? text;
     const key    = cacheKey(cachedText, voiceId);
@@ -289,19 +324,49 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       return;
     }
     try {
-      const chunks   = splitSentences(cachedText);
       const parts: Buffer[] = [];
-      for (const chunk of chunks) {
-        const chunkKey    = cacheKey(chunk, voiceId);
-        const chunkCached = cacheGet(chunkKey);
-        if (chunkCached) {
-          parts.push(chunkCached);
-        } else {
-          const audio = await askDaemon(chunk, voz.refAudio ?? DIEVER_REF);
-          cacheSet(chunkKey, audio);
-          parts.push(audio);
+
+      // Si el texto tiene risas, procesamos segmento a segmento
+      if (hasLaugh(cachedText)) {
+        const segments = splitLaughSegments(cachedText);
+        for (const seg of segments) {
+          if (!seg.text) continue;
+          if (seg.isLaugh) {
+            // Risa → generador humano de risa (no XTTS)
+            const laughBuf = await genLaughAudio(seg.text);
+            parts.push(laughBuf);
+          } else {
+            // Texto normal → XTTS clonado por chunks
+            const speechChunks = splitSentences(seg.text);
+            for (const chunk of speechChunks) {
+              const chunkKey    = cacheKey(chunk, voiceId);
+              const chunkCached = cacheGet(chunkKey);
+              if (chunkCached) {
+                parts.push(chunkCached);
+              } else {
+                const audio = await askDaemon(chunk, voz.refAudio ?? DIEVER_REF);
+                cacheSet(chunkKey, audio);
+                parts.push(audio);
+              }
+            }
+          }
+        }
+      } else {
+        // Sin risas — flujo normal
+        const chunks = splitSentences(cachedText);
+        for (const chunk of chunks) {
+          const chunkKey    = cacheKey(chunk, voiceId);
+          const chunkCached = cacheGet(chunkKey);
+          if (chunkCached) {
+            parts.push(chunkCached);
+          } else {
+            const audio = await askDaemon(chunk, voz.refAudio ?? DIEVER_REF);
+            cacheSet(chunkKey, audio);
+            parts.push(audio);
+          }
         }
       }
+
       const audio = concatWavBuffers(parts);
       cacheSet(key, audio);
       res.setHeader("Content-Type", "audio/wav");
