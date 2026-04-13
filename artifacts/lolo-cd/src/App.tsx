@@ -50,46 +50,34 @@ export default function App() {
     }
   }, []);
 
-  const startUpgradePolling = useCallback((textoParaPoll: string) => {
+  const startUpgradePolling = useCallback((textoParaPoll: string, xttsPromise: Promise<Blob>) => {
     stopUpgradePolling();
     setDarwinUpgrading(true);
     setDarwinUpgraded(false);
 
-    upgradeTimerRef.current = setInterval(async () => {
-      try {
-        const r = await fetch(`${BASE}/api/tts/xtts-status?texto=${encodeURIComponent(textoParaPoll)}`);
-        const { ready } = await r.json();
-        if (!ready) return;
+    xttsPromise.then(async (blob) => {
+      const newUrl     = URL.createObjectURL(blob);
+      const wasPlaying = audioRef.current && !audioRef.current.paused;
+      const wasTime    = audioRef.current?.currentTime ?? 0;
 
-        stopUpgradePolling();
-        setDarwinUpgrading(false);
+      setAudioUrl(newUrl);
+      setCacheHit(null);
+      setDarwinUpgrading(false);
+      setDarwinUpgraded(true);
 
-        const res = await fetch(`${BASE}/api/tts/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ texto: textoParaPoll, voiceId: "darwin" }),
-        });
-        if (!res.ok) return;
-
-        const blob     = await res.blob();
-        const newUrl   = URL.createObjectURL(blob);
-        const wasPlaying = audioRef.current && !audioRef.current.paused;
-        const wasTime    = audioRef.current?.currentTime ?? 0;
-
-        setAudioUrl(newUrl);
-        setCacheHit(true);
-        setDarwinUpgraded(true);
-
-        setTimeout(() => {
-          if (audioRef.current) {
-            if (wasPlaying) {
-              audioRef.current.currentTime = wasTime < (audioRef.current.duration || 9999) ? wasTime : 0;
-              audioRef.current.play().catch(() => {});
-            }
+      setTimeout(() => {
+        if (audioRef.current) {
+          if (wasPlaying) {
+            audioRef.current.currentTime = wasTime < (audioRef.current.duration || 9999) ? wasTime : 0;
+            audioRef.current.play().catch(() => {});
           }
-        }, 80);
-      } catch { /* ignorar */ }
-    }, 500);
+        }
+      }, 80);
+    }).catch(() => {
+      setDarwinUpgrading(false);
+    });
+
+    void textoParaPoll;
   }, [stopUpgradePolling]);
 
   useEffect(() => () => stopUpgradePolling(), [stopUpgradePolling]);
@@ -115,16 +103,19 @@ export default function App() {
         const j = await res.json().catch(() => ({}));
         throw new Error((j as { error?: string }).error ?? "Error del servidor");
       }
-      const isHit       = res.headers.get("x-cache") === "HIT" || res.headers.get("x-cache") === "HIT-XTTS";
       const isUpgrading = res.headers.get("x-darwin-upgrading") === "true";
-      setCacheHit(isHit);
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
       setAudioUrl(url);
       setTimeout(() => audioRef.current?.play(), 50);
 
       if (isUpgrading) {
-        startUpgradePolling(texto.trim());
+        const xttsBlob = fetch(`${BASE}/api/tts/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ texto, voiceId: "darwin-xtts" }),
+        }).then(r => r.ok ? r.blob() : Promise.reject(new Error("xtts error")));
+        startUpgradePolling(texto.trim(), xttsBlob);
       }
     } catch (e) {
       setError((e as Error).message);

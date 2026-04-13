@@ -1,107 +1,24 @@
-import { Router }                  from "express";
-import { spawn, ChildProcess }    from "child_process";
-import { randomUUID, createHash } from "crypto";
-import { join }                   from "path";
-import { existsSync, unlinkSync, readFileSync, writeFileSync, mkdirSync,
-         readdirSync, statSync, utimesSync }                              from "fs";
+import { Router }               from "express";
+import { spawn, ChildProcess } from "child_process";
+import { randomUUID }          from "crypto";
+import { join }                from "path";
+import { existsSync, unlinkSync } from "fs";
 
 const ttsRouter = Router();
 
-const TTS_SERVICE   = "http://127.0.0.1:5000";
-const DIEVER_REF    = "/home/runner/workspace/diever_referencia.wav";
-const NEXUS_REF     = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
-const NEXUS_CONFIG  = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
-const NEXUS_ULTRA_REF = NEXUS_REF;
+const TTS_SERVICE        = "http://127.0.0.1:5000";
+const DIEVER_REF         = "/home/runner/workspace/diever_referencia.wav";
+const NEXUS_REF          = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
+const NEXUS_CONFIG       = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
+const NEXUS_ULTRA_REF    = NEXUS_REF;
 const NEXUS_ULTRA_CONFIG = "/home/runner/workspace/attached_assets/NEXUS_ULTRA_FAST_1776036098561.json";
-const NEXUS_PIPER_PATCH = "nexus-piper-patch";
-const DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
-
-// ── Caché LRU en disco — autolimpiante, nunca se llena ───────────────────────
-const CACHE_DIR     = "/home/runner/workspace/tts_cache";
-const CACHE_MAX_MB  = 400;                          // límite en MB
-const CACHE_MAX_B   = CACHE_MAX_MB * 1024 * 1024;  // en bytes
-mkdirSync(CACHE_DIR, { recursive: true });
-
-function cacheKey(texto: string, voiceId: string) {
-  return createHash("sha1").update(`${voiceId}::${texto}`).digest("hex");
-}
-
-function cacheGet(key: string): Buffer | null {
-  const p = join(CACHE_DIR, `${key}.wav`);
-  if (!existsSync(p)) return null;
-  const now = new Date();
-  try { utimesSync(p, now, now); } catch { /* ignorar */ }
-  return readFileSync(p);
-}
-
-function cacheSet(key: string, data: Buffer) {
-  writeFileSync(join(CACHE_DIR, `${key}.wav`), data);
-  setImmediate(evictLRU);
-}
-
-function evictLRU() {
-  try {
-    const files = readdirSync(CACHE_DIR)
-      .filter(f => f.endsWith(".wav"))
-      .map(f => {
-        const full = join(CACHE_DIR, f);
-        const st   = statSync(full);
-        return { full, atime: st.atimeMs, size: st.size };
-      })
-      .sort((a, b) => a.atime - b.atime);
-
-    let total = files.reduce((s, f) => s + f.size, 0);
-    if (total <= CACHE_MAX_B) return;
-
-    for (const file of files) {
-      if (total <= CACHE_MAX_B * 0.8) break;
-      try { unlinkSync(file.full); total -= file.size; } catch { /* ignorar */ }
-    }
-    console.log(`[CACHE] LRU eviction: ${Math.round(total / 1024 / 1024)}MB libre`);
-  } catch { /* ignorar */ }
-}
-
-function instantClonedText(texto: string) {
-  const normalized = texto
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .replace(/[¡!¿?.,\s]+$/g, "");
-
-  if (normalized === "hola") return "Hola.";
-  if (
-    normalized === "hola a la velocidad de la luz" ||
-    normalized === "hola a la veloxidad de la luz"
-  ) {
-    return "Hola a la velocidad de la luz.";
-  }
-  return null;
-}
-
-// ── Frases pre-calentadas para Diever ─────────────────────────────────────────
-const WARMUP_PHRASES = [
-  "Hola.",
-  "Hola a la velocidad de la luz.",
-  "Hola, ¿cómo están?",
-  "Buenas.",
-  "Bienvenidos a Motor Lolo CD.",
-  "Estás escuchando Motor Lolo CD, la mejor música para tu viaje.",
-  "Seguimos con más música en Motor Lolo CD.",
-  "Muchas gracias por escucharnos.",
-  "Y ahora sí, con todo.",
-  "Eso es todo por hoy, hasta la próxima.",
-  "Buenas noches a todos nuestros oyentes.",
-  "Buenos días Colombia, arriba ese ánimo.",
-  "Una canción especial para todos ustedes.",
-  "Motor Lolo CD, siempre contigo.",
-];
+const NEXUS_PIPER_PATCH  = "nexus-piper-patch";
+const DAEMON_SCRIPT      = "/home/runner/workspace/xtts_daemon.py";
 
 // ── XTTS Daemon ───────────────────────────────────────────────────────────────
 let daemon: ChildProcess | null = null;
 let daemonReady                 = false;
 let daemonBuf                   = Buffer.alloc(0);
-let warmupDone                  = false;
 
 type QueueItem = {
   texto: string;
@@ -138,10 +55,6 @@ function startDaemon() {
         if (msg === "READY") {
           daemonReady = true;
           console.log("[TTS] Daemon XTTS listo ✓");
-          if (!warmupDone) {
-            warmupDone = true;
-            scheduleWarmup();
-          }
           processNextInQueue();
         }
       }
@@ -192,38 +105,7 @@ function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
   });
 }
 
-function scheduleWarmup() {
-  (async () => {
-    console.log("[TTS] Precalentando caché Darwin/Diever/Nexus en background...");
-    let hit = 0, miss = 0;
-    const clonedWarmups = [
-      ["darwin-xtts", DIEVER_REF],
-      ["diever", DIEVER_REF],
-      ["nexus", NEXUS_REF],
-      ["nexus-ultra", NEXUS_ULTRA_REF],
-    ] as const;
-    for (const [voiceId, refAudio] of clonedWarmups) {
-      for (const frase of WARMUP_PHRASES) {
-        const key = cacheKey(frase, voiceId);
-        if (cacheGet(key)) { hit++; continue; }
-        try {
-          const audio = await askDaemon(frase, refAudio);
-          cacheSet(key, audio);
-          miss++;
-          console.log(`[TTS] Warmup ${voiceId}: "${frase.slice(0, 45)}"`);
-        } catch {
-          // ignorar errores de warmup
-        }
-      }
-    }
-    console.log(`[TTS] Warmup completo — ${hit} en caché, ${miss} generados.`);
-  })().catch(console.error);
-}
-
 startDaemon();
-
-// Frases con XTTS en generación background (evita duplicados)
-const _xttsInFlight = new Set<string>();
 
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {
@@ -231,44 +113,35 @@ const VOICES: Record<string, {
   cloned?: boolean; piper?: string; piperPatch?: string; refAudio?: string; config?: string;
   edgeDarwin?: boolean;
 }> = {
-  "darwin":      { name: "Darwin ★",                      edgeDarwin: true },
-  "darwin-xtts": { name: "Darwin ★ (XTTS · alta calidad)", cloned: true },
-  "diever":      { name: "Diever Muñoz ★ (voz clonada)", cloned: true },
-  "nexus":       { name: "Nexus Offline Juan ★ (voz subida)", cloned: true, refAudio: NEXUS_REF, config: NEXUS_CONFIG },
-  "nexus-ultra": { name: "Nexus Ultra Fast ★ (caché local)", cloned: true, refAudio: NEXUS_ULTRA_REF, config: NEXUS_ULTRA_CONFIG },
-  "nexus-piper-patch":  { name: "Nexus Piper Patch ★ (Piper + ADN)",        piperPatch: NEXUS_PIPER_PATCH },
-  "lolo-piper-patch":   { name: "Lolo ★ (Piper + ADN voz clonada)",        piperPatch: "lolo-piper-patch"   },
-  "darwin-piper-patch": { name: "Darwin ★ (Piper + ADN voz clonada)",       piperPatch: "darwin-piper-patch" },
-  "claude-mx":   { name: "Claude (México) · Piper",      piper: "claude-mx"  },
-  "daniela-ar":  { name: "Daniela (Argentina) · Piper",  piper: "daniela-ar" },
-  "carlfm-es":   { name: "CarlFM (España) · Piper",      piper: "carlfm-es"  },
-  "davefx-es":   { name: "DaveFX (España) · Piper",      piper: "davefx-es"  },
-  "gonzalo-co":  { name: "Gonzalo (Colombia)", voice: "es-CO-GonzaloNeural", pitch: "-2Hz", rate: "-5%" },
-  "jorge-mx":    { name: "Jorge (México)",     voice: "es-MX-JorgeNeural",   pitch: "-2Hz", rate: "-5%" },
-  "alvaro-es":   { name: "Álvaro (España)",    voice: "es-ES-AlvaroNeural",  pitch: "-2Hz", rate: "-5%" },
-  "tomas-ar":    { name: "Tomás (Argentina)",  voice: "es-AR-TomasNeural",   pitch: "-3Hz", rate: "-5%" },
-  "mateo-uy":    { name: "Mateo (Uruguay)",    voice: "es-UY-MateoNeural",   pitch: "-2Hz", rate: "-8%" },
-  "dalia-mx":    { name: "Dalia (México)",     voice: "es-MX-DaliaNeural",   pitch: "+0Hz", rate: "+0%" },
-  "salome-co":   { name: "Salomé (Colombia)",  voice: "es-CO-SalomeNeural",  pitch: "+0Hz", rate: "+0%" },
-  "elvira-es":   { name: "Elvira (España)",    voice: "es-ES-ElviraNeural",  pitch: "+0Hz", rate: "+0%" },
+  "darwin":             { name: "Darwin ★",                               edgeDarwin: true },
+  "darwin-xtts":        { name: "Darwin ★ (XTTS · alta calidad)",         cloned: true },
+  "diever":             { name: "Diever Muñoz ★ (voz clonada)",           cloned: true },
+  "nexus":              { name: "Nexus Offline Juan ★ (voz subida)",      cloned: true, refAudio: NEXUS_REF, config: NEXUS_CONFIG },
+  "nexus-ultra":        { name: "Nexus Ultra Fast ★ (caché local)",       cloned: true, refAudio: NEXUS_ULTRA_REF, config: NEXUS_ULTRA_CONFIG },
+  "nexus-piper-patch":  { name: "Nexus Piper Patch ★ (Piper + ADN)",      piperPatch: NEXUS_PIPER_PATCH },
+  "lolo-piper-patch":   { name: "Lolo ★ (Piper + ADN voz clonada)",       piperPatch: "lolo-piper-patch" },
+  "darwin-piper-patch": { name: "Darwin ★ (Piper + ADN voz clonada)",     piperPatch: "darwin-piper-patch" },
+  "claude-mx":          { name: "Claude (México) · Piper",                piper: "claude-mx" },
+  "daniela-ar":         { name: "Daniela (Argentina) · Piper",            piper: "daniela-ar" },
+  "carlfm-es":          { name: "CarlFM (España) · Piper",                piper: "carlfm-es" },
+  "davefx-es":          { name: "DaveFX (España) · Piper",                piper: "davefx-es" },
+  "gonzalo-co":         { name: "Gonzalo (Colombia)", voice: "es-CO-GonzaloNeural", pitch: "-2Hz", rate: "-5%" },
+  "jorge-mx":           { name: "Jorge (México)",     voice: "es-MX-JorgeNeural",   pitch: "-2Hz", rate: "-5%" },
+  "alvaro-es":          { name: "Álvaro (España)",    voice: "es-ES-AlvaroNeural",  pitch: "-2Hz", rate: "-5%" },
+  "tomas-ar":           { name: "Tomás (Argentina)",  voice: "es-AR-TomasNeural",   pitch: "-3Hz", rate: "-5%" },
+  "mateo-uy":           { name: "Mateo (Uruguay)",    voice: "es-UY-MateoNeural",   pitch: "-2Hz", rate: "-8%" },
+  "dalia-mx":           { name: "Dalia (México)",     voice: "es-MX-DaliaNeural",   pitch: "+0Hz", rate: "+0%" },
+  "salome-co":          { name: "Salomé (Colombia)",  voice: "es-CO-SalomeNeural",  pitch: "+0Hz", rate: "+0%" },
+  "elvira-es":          { name: "Elvira (España)",    voice: "es-ES-ElviraNeural",  pitch: "+0Hz", rate: "+0%" },
 };
-
-// ── GET /tts/xtts-status ─────────────────────────────────────────────────────
-ttsRouter.get("/tts/xtts-status", (req, res) => {
-  const texto = (req.query.texto as string ?? "").trim();
-  if (!texto) { res.json({ ready: false }); return; }
-  const key   = cacheKey(texto, "darwin-xtts");
-  const ready = !!cacheGet(key);
-  res.json({ ready, daemonReady });
-});
 
 // ── GET /tts/voices ───────────────────────────────────────────────────────────
 ttsRouter.get("/tts/voices", (_req, res) => {
   res.json({
     voices: Object.entries(VOICES).map(([id, v]) => ({
       id, name: v.name,
-      cloned:     v.cloned  ?? false,
-      piper:      !!(v.piper || v.piperPatch),
+      cloned:      v.cloned ?? false,
+      piper:       !!(v.piper || v.piperPatch),
       daemonReady: v.cloned ? daemonReady : undefined,
     })),
     daemonReady,
@@ -286,9 +159,7 @@ function splitSentences(text: string): string[] {
     const candidate = current ? `${current} ${piece}` : piece;
     if (candidate.length > MAX_CHUNK_CHARS) {
       if (current) chunks.push(current.trim());
-      current = piece.length > MAX_CHUNK_CHARS
-        ? piece.slice(0, MAX_CHUNK_CHARS)
-        : piece;
+      current = piece.length > MAX_CHUNK_CHARS ? piece.slice(0, MAX_CHUNK_CHARS) : piece;
     } else {
       current = candidate;
     }
@@ -300,10 +171,10 @@ function splitSentences(text: string): string[] {
 function concatWavBuffers(bufs: Buffer[]): Buffer {
   if (bufs.length === 0) throw new Error("Sin buffers WAV");
   if (bufs.length === 1) return bufs[0];
-  const hdr       = bufs[0].slice(0, 44);
-  const pcmParts  = bufs.map(b => b.slice(44));
-  const totalPcm  = Buffer.concat(pcmParts);
-  const out       = Buffer.alloc(44 + totalPcm.length);
+  const hdr      = bufs[0].slice(0, 44);
+  const pcmParts = bufs.map(b => b.slice(44));
+  const totalPcm = Buffer.concat(pcmParts);
+  const out      = Buffer.alloc(44 + totalPcm.length);
   hdr.copy(out, 0);
   out.writeUInt32LE(totalPcm.length + 36, 4);
   out.writeUInt32LE(totalPcm.length, 40);
@@ -322,35 +193,17 @@ ttsRouter.post("/tts/generate", async (req, res) => {
   const voz  = VOICES[voiceId] ?? VOICES["gonzalo-co"];
   const text = texto.trim();
 
-  // ── XTTS clonado — chunks ilimitados ──────────────────────────────────────
+  // ── XTTS clonado — 100% en memoria ────────────────────────────────────────
   if (voz.cloned) {
-    const cachedText = instantClonedText(text) ?? text;
-    const key    = cacheKey(cachedText, voiceId);
-    const cached = cacheGet(key);
-    if (cached) {
-      res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "HIT");
-      res.send(cached);
-      return;
-    }
     try {
-      const chunks   = splitSentences(cachedText);
+      const chunks = splitSentences(text);
       const parts: Buffer[] = [];
       for (const chunk of chunks) {
-        const chunkKey    = cacheKey(chunk, voiceId);
-        const chunkCached = cacheGet(chunkKey);
-        if (chunkCached) {
-          parts.push(chunkCached);
-        } else {
-          const audio = await askDaemon(chunk, voz.refAudio ?? DIEVER_REF);
-          cacheSet(chunkKey, audio);
-          parts.push(audio);
-        }
+        const audio = await askDaemon(chunk, voz.refAudio ?? DIEVER_REF);
+        parts.push(audio);
       }
       const audio = concatWavBuffers(parts);
-      cacheSet(key, audio);
       res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "MISS");
       res.send(audio);
     } catch (e) {
       res.status(503).json({ error: (e as Error).message });
@@ -358,15 +211,8 @@ ttsRouter.post("/tts/generate", async (req, res) => {
     return;
   }
 
+  // ── Piper Patch — 100% en memoria ─────────────────────────────────────────
   if (voz.piperPatch) {
-    const key = cacheKey(text, voiceId);
-    const cached = cacheGet(key);
-    if (cached) {
-      res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "HIT");
-      res.send(cached);
-      return;
-    }
     try {
       const upstream = await fetch(`${TTS_SERVICE}/piper-patch`, {
         method:  "POST",
@@ -378,9 +224,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
         res.status(upstream.status).json(err); return;
       }
       const buf = Buffer.from(await upstream.arrayBuffer());
-      cacheSet(key, buf);
       res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "MISS");
       res.send(buf);
     } catch (e) {
       res.status(503).json({ error: `Error Piper Patch: ${(e as Error).message}` });
@@ -388,58 +232,22 @@ ttsRouter.post("/tts/generate", async (req, res) => {
     return;
   }
 
-  // ── Darwin inteligente: Edge rápido + upgrade XTTS en background ──────────
+  // ── Darwin: Edge rápido directo + upgrade XTTS en background (en memoria) ─
   if (voz.edgeDarwin) {
-    const xttsKey = cacheKey(text, "darwin-xtts");   // caché de alta calidad
-    const edgeKey = cacheKey(text, voiceId);          // caché de respuesta rápida
-
-    // 1. Si ya tenemos XTTS de alta calidad, devolverlo directo
-    const xttsHit = cacheGet(xttsKey);
-    if (xttsHit) {
-      res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "HIT-XTTS");
-      res.send(xttsHit);
-      return;
-    }
-
-    // 2. Lanzar generación XTTS en background (si el daemon está listo y no hay una en curso)
-    if (daemonReady && !_xttsInFlight.has(xttsKey)) {
-      _xttsInFlight.add(xttsKey);
-      (async () => {
-        try {
-          const chunks = splitSentences(text);
-          const parts: Buffer[] = [];
-          for (const chunk of chunks) {
-            const ck = cacheKey(chunk, "darwin-xtts");
-            const cc = cacheGet(ck);
-            if (cc) { parts.push(cc); continue; }
-            const audio = await askDaemon(chunk, DIEVER_REF);
-            cacheSet(ck, audio);
-            parts.push(audio);
-          }
-          const xttsAudio = concatWavBuffers(parts);
-          cacheSet(xttsKey, xttsAudio);
-          // Actualizar también el caché rápido para que próximas respuestas sean XTTS
-          cacheSet(edgeKey, xttsAudio);
-          console.log(`[TTS] XTTS background listo: "${text.slice(0, 50)}"`);
-        } catch (e) {
-          console.error("[TTS] XTTS background error:", (e as Error).message);
-        } finally {
-          _xttsInFlight.delete(xttsKey);
+    // Lanzar XTTS en background sin disco
+    let xttsPromise: Promise<Buffer> | null = null;
+    if (daemonReady) {
+      xttsPromise = (async () => {
+        const chunks = splitSentences(text);
+        const parts: Buffer[] = [];
+        for (const chunk of chunks) {
+          const audio = await askDaemon(chunk, DIEVER_REF);
+          parts.push(audio);
         }
-      })().catch(console.error);
+        return concatWavBuffers(parts);
+      })();
     }
 
-    // 3. Si ya hay un Edge+Darwin en caché, devolver inmediato
-    const edgeHit = cacheGet(edgeKey);
-    if (edgeHit) {
-      res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "HIT");
-      res.send(edgeHit);
-      return;
-    }
-
-    // 4. Generar Edge+Darwin como respuesta rápida (~0.75s)
     try {
       const upstream = await fetch(`${TTS_SERVICE}/edge-darwin`, {
         method:  "POST",
@@ -450,19 +258,35 @@ ttsRouter.post("/tts/generate", async (req, res) => {
         const err = await upstream.json().catch(() => ({ error: "Error Edge Darwin" }));
         res.status(upstream.status).json(err); return;
       }
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      cacheSet(edgeKey, buf);
+      const edgeBuf = Buffer.from(await upstream.arrayBuffer());
+
+      // Si XTTS terminó antes que Edge (raro pero posible), devolver XTTS directo
+      if (xttsPromise) {
+        const xttsReady = await Promise.race([
+          xttsPromise.then(b => b).catch(() => null),
+          new Promise<null>(r => setTimeout(() => r(null), 0)),
+        ]);
+        if (xttsReady) {
+          res.setHeader("Content-Type", "audio/wav");
+          res.setHeader("X-Cache", "HIT-XTTS");
+          res.send(xttsReady);
+          return;
+        }
+      }
+
       res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Cache", "MISS");
-      res.setHeader("X-Darwin-Upgrading", "true");
-      res.send(buf);
+      res.setHeader("X-Darwin-Upgrading", xttsPromise ? "true" : "false");
+      res.send(edgeBuf);
+
+      // Mantener la promesa viva en background (sin hacer nada con el resultado)
+      xttsPromise?.catch(() => {});
     } catch (e) {
       res.status(503).json({ error: `Error Edge Darwin: ${(e as Error).message}` });
     }
     return;
   }
 
-  // ── Piper TTS ─────────────────────────────────────────────────────────────
+  // ── Piper TTS — 100% en memoria ───────────────────────────────────────────
   if (voz.piper) {
     try {
       const upstream = await fetch(`${TTS_SERVICE}/piper`, {
@@ -483,7 +307,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
     return;
   }
 
-  // ── Edge TTS ──────────────────────────────────────────────────────────────
+  // ── Edge TTS — 100% en memoria ────────────────────────────────────────────
   try {
     const upstream = await fetch(`${TTS_SERVICE}/edge`, {
       method:  "POST",
