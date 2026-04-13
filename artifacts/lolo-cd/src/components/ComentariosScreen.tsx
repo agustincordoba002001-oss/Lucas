@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface Comentario { id: string; autor: string; texto: string; }
+interface Comentario { id: string; autor: string; texto: string; hasAudio: number; }
 interface PageResp   { items: Comentario[]; nextCursor: number | null; }
 
 interface Props { voiceId?: string; }
@@ -39,14 +39,24 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
 
   useEffect(() => { cargarPagina(null); }, []);
 
-  // ── Generar audio al momento desde la semilla de texto ───────────────────
-  const generarYReproducir = useCallback(async (texto: string): Promise<void> => {
-    const res = await fetch(`${BASE}/api/tts/generate`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ texto, voiceId }),
-    });
-    if (!res.ok) throw new Error(`Error TTS: ${res.status}`);
+  // ── Reproducir audio desde la semilla ────────────────────────────────────
+  // La primera vez genera y lo guarda dentro de la semilla para siempre.
+  // Las siguientes veces sale instantáneo directo de la semilla.
+  const reproducirSemilla = useCallback(async (c: Comentario, idx: number): Promise<void> => {
+    const res = await fetch(
+      `${BASE}/api/comments/${c.id}/audio?voiceId=${encodeURIComponent(voiceId)}`
+    );
+    if (!res.ok) throw new Error(`Error al reproducir: ${res.status}`);
+
+    const seedHit = res.headers.get("x-seed") === "HIT";
+
+    // Marcar como guardado en la semilla si recién se generó
+    if (!seedHit) {
+      setComentarios(prev =>
+        prev.map(x => x.id === c.id ? { ...x, hasAudio: 1 } : x)
+      );
+    }
+
     const url   = URL.createObjectURL(await res.blob());
     const audio = new Audio(url);
     audioRef.current = audio;
@@ -63,10 +73,10 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     abortRef.current = false;
     setReproduciendo(true);
     setIndiceActual(idx);
-    setGenerandoIdx(idx);
+    setGenerandoIdx(c.hasAudio ? null : idx);
     setError(null);
     try {
-      await generarYReproducir(c.texto);
+      await reproducirSemilla(c, idx);
     } catch (e) {
       if (!abortRef.current) setError((e as Error).message);
     } finally {
@@ -74,7 +84,7 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
       setIndiceActual(null);
       setGenerandoIdx(null);
     }
-  }, [generarYReproducir, reproduciendo]);
+  }, [reproducirSemilla, reproduciendo]);
 
   // ── Leer todas en secuencia ───────────────────────────────────────────────
   const leerTodos = useCallback(async () => {
@@ -85,9 +95,9 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     for (let i = 0; i < comentarios.length; i++) {
       if (abortRef.current) break;
       setIndiceActual(i);
-      setGenerandoIdx(i);
+      setGenerandoIdx(comentarios[i].hasAudio ? null : i);
       try {
-        await generarYReproducir(comentarios[i].texto);
+        await reproducirSemilla(comentarios[i], i);
       } catch (e) {
         if (!abortRef.current) { setError((e as Error).message); break; }
       }
@@ -96,7 +106,7 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     setReproduciendo(false);
     setIndiceActual(null);
     setGenerandoIdx(null);
-  }, [comentarios, generarYReproducir, reproduciendo]);
+  }, [comentarios, reproducirSemilla, reproduciendo]);
 
   const detener = useCallback(() => {
     abortRef.current = true;
@@ -132,6 +142,8 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
     await fetch(`${BASE}/api/comments/${id}`, { method: "DELETE" }).catch(() => {});
   };
 
+  const conAudio = comentarios.filter(c => c.hasAudio).length;
+
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
 
@@ -141,8 +153,13 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
           <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
             FRASES SEMILLA {comentarios.length > 0 && `(${comentarios.length})`}
           </span>
+          {comentarios.length > 0 && (
+            <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: "#86efac" }}>
+              {conAudio > 0 ? `⚡ ${conAudio} con audio grabado` : ""}
+            </span>
+          )}
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            guardadas para siempre como texto · audio generado al instante · 0 bytes
+            el audio vive dentro de la semilla · primera vez genera · después es instantáneo
           </div>
         </div>
         <div>
@@ -193,15 +210,20 @@ export default function ComentariosScreen({ voiceId = "darwin-piper-patch" }: Pr
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
                     {isPlaying && !isGenerating && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
                     <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
-                    {isGenerating && <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ generando...</span>}
+                    {isGenerating
+                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ grabando en semilla...</span>
+                      : c.hasAudio
+                        ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 700 }}>⚡ semilla con audio</span>
+                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ texto</span>
+                    }
                   </div>
                   <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
                   {!reproduciendo && (
                     <button onClick={() => reproducirUno(c, i)} title="Reproducir"
-                      style={{ background: "rgba(168,85,247,0.15)", border: "1px solid rgba(168,85,247,0.3)", cursor: "pointer", color: "#d8b4fe", fontSize: 11, padding: "3px 8px", borderRadius: 6 }}>
-                      ▶
+                      style={{ background: c.hasAudio ? "rgba(34,197,94,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.hasAudio ? "rgba(34,197,94,0.3)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.hasAudio ? "#86efac" : "#d8b4fe", fontSize: 11, padding: "3px 8px", borderRadius: 6 }}>
+                      {c.hasAudio ? "⚡" : "▶"}
                     </button>
                   )}
                   <button onClick={() => eliminar(c.id)} title="Eliminar"
