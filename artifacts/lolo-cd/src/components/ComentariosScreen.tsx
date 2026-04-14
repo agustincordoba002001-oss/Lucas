@@ -159,7 +159,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
             </span>
           )}
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            texto eterno · audio guardado como texto en la semilla · instantáneo al reproducir
+            texto eterno · Opus ~15 KB/frase · guardado como texto · instantáneo al reproducir
           </div>
         </div>
         <div>
