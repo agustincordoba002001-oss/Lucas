@@ -71,7 +71,17 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     const audio = new Audio(url);
     audioRef.current = audio;
     await new Promise<void>((resolve, reject) => {
-      audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.onended = () => {
+        URL.revokeObjectURL(url);
+        // Evaporar el fantasma al instante cuando termina el audio
+        fetch(`${BASE}/api/comments/${c.id}/ghost`, { method: "DELETE" })
+          .then(() => {
+            setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, ghost: false } : x));
+            cargarGhostStatus();
+          })
+          .catch(() => {});
+        resolve();
+      };
       audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error reproduciendo")); };
       audio.play().catch(reject);
     });
@@ -121,10 +131,20 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
   const detener = useCallback(() => {
     abortRef.current = true;
     audioRef.current?.pause();
+    // Evaporar el fantasma del comentario que se estaba reproduciendo
+    if (indiceActual !== null && comentarios[indiceActual]) {
+      const id = comentarios[indiceActual].id;
+      fetch(`${BASE}/api/comments/${id}/ghost`, { method: "DELETE" })
+        .then(() => {
+          setComentarios(prev => prev.map(x => x.id === id ? { ...x, ghost: false } : x));
+          cargarGhostStatus();
+        })
+        .catch(() => {});
+    }
     setReproduciendo(false);
     setIndiceActual(null);
     setMaterializandoIdx(null);
-  }, []);
+  }, [indiceActual, comentarios, cargarGhostStatus]);
 
   // ── Guardar nueva frase semilla ───────────────────────────────────────────
   const agregarComentario = async () => {

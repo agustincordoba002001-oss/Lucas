@@ -162,6 +162,13 @@ commentsRouter.post("/comments", (req, res) => {
   res.status(201).json({ id, autor: autor.trim() || "Anónimo", texto: texto.trim(), ghost: false });
 });
 
+// ── DELETE /comments/:id/ghost — evaporar fantasma al instante ───────────────
+commentsRouter.delete("/comments/:id/ghost", (req, res) => {
+  const existed = ghosts.has(req.params.id);
+  ghosts.delete(req.params.id);
+  res.json({ ok: true, evaporated: existed });
+});
+
 // ── DELETE /comments/:id ──────────────────────────────────────────────────────
 commentsRouter.delete("/comments/:id", (req, res) => {
   ghosts.delete(req.params.id);
