@@ -39,10 +39,10 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
 
   useEffect(() => { cargarPagina(null); }, []);
 
-  // ── Reproducir audio desde la semilla ────────────────────────────────────
-  // La primera vez genera y lo guarda dentro de la semilla para siempre.
-  // Las siguientes veces sale instantáneo directo de la semilla.
-  const reproducirSemilla = useCallback(async (c: Comentario, idx: number): Promise<void> => {
+  // ── Reproducir desde la semilla ───────────────────────────────────────────
+  // Primera vez: genera audio, lo guarda como texto en la semilla, lo reproduce.
+  // Siguientes veces: lee el texto de la semilla, decodifica, reproduce al instante.
+  const reproducirSemilla = useCallback(async (c: Comentario): Promise<boolean> => {
     const res = await fetch(
       `${BASE}/api/comments/${c.id}/audio?voiceId=${encodeURIComponent(voiceId)}`
     );
@@ -50,7 +50,6 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
 
     const seedHit = res.headers.get("x-seed") === "HIT";
 
-    // Marcar como guardado en la semilla si recién se generó
     if (!seedHit) {
       setComentarios(prev =>
         prev.map(x => x.id === c.id ? { ...x, hasAudio: 1 } : x)
@@ -65,6 +64,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error reproduciendo")); };
       audio.play().catch(reject);
     });
+    return seedHit;
   }, [voiceId]);
 
   // ── Reproducir una sola frase ─────────────────────────────────────────────
@@ -76,7 +76,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     setGenerandoIdx(c.hasAudio ? null : idx);
     setError(null);
     try {
-      await reproducirSemilla(c, idx);
+      await reproducirSemilla(c);
     } catch (e) {
       if (!abortRef.current) setError((e as Error).message);
     } finally {
@@ -97,7 +97,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       setIndiceActual(i);
       setGenerandoIdx(comentarios[i].hasAudio ? null : i);
       try {
-        await reproducirSemilla(comentarios[i], i);
+        await reproducirSemilla(comentarios[i]);
       } catch (e) {
         if (!abortRef.current) { setError((e as Error).message); break; }
       }
@@ -153,13 +153,13 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
           <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
             FRASES SEMILLA {comentarios.length > 0 && `(${comentarios.length})`}
           </span>
-          {comentarios.length > 0 && (
+          {conAudio > 0 && (
             <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: "#86efac" }}>
-              {conAudio > 0 ? `⚡ ${conAudio} con audio grabado` : ""}
+              ⚡ {conAudio} con audio guardado como texto
             </span>
           )}
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            el audio vive dentro de la semilla · primera vez genera · después es instantáneo
+            texto eterno · audio guardado como texto en la semilla · instantáneo al reproducir
           </div>
         </div>
         <div>
@@ -211,10 +211,10 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
                     {isPlaying && !isGenerating && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
                     <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
                     {isGenerating
-                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ grabando en semilla...</span>
+                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ guardando en semilla...</span>
                       : c.hasAudio
-                        ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 700 }}>⚡ semilla con audio</span>
-                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ texto</span>
+                        ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 700 }}>⚡ audio en semilla</span>
+                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ solo texto</span>
                     }
                   </div>
                   <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
