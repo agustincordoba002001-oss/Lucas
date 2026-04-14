@@ -14,6 +14,7 @@ type PhotonMemoryAudio = { ct: string; buf: Buffer; bytes: number; touched: numb
 
 const PHOTON_MEMORY_LIMIT_BYTES = 50 * 1024 * 1024;
 const photonMemoryCache = new Map<string, PhotonMemoryAudio>();
+const photonWarmups = new Map<string, Promise<void>>();
 let photonMemoryBytes = 0;
 
 function photonCacheKey(voiceId: string, photonCapsule: string | null, texto: string) {
@@ -45,6 +46,30 @@ function setPhotonMemoryCache(key: string, ct: string, buf: Buffer) {
     const oldest = photonMemoryCache.get(oldestKey);
     if (oldest) photonMemoryBytes -= oldest.bytes;
     photonMemoryCache.delete(oldestKey);
+  }
+}
+
+async function generatePhotonAudioToMemory(cacheKey: string, texto: string, voiceId: string) {
+  if (getPhotonMemoryCache(cacheKey)) return;
+  if (photonWarmups.has(cacheKey)) return photonWarmups.get(cacheKey);
+
+  const promise = (async () => {
+    const ttsRes = await fetch(TTS_API, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ texto, voiceId }),
+    });
+    if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status}`);
+    const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
+    const buf = Buffer.from(await ttsRes.arrayBuffer());
+    setPhotonMemoryCache(cacheKey, ct, buf);
+  })();
+
+  photonWarmups.set(cacheKey, promise);
+  try {
+    await promise;
+  } finally {
+    photonWarmups.delete(cacheKey);
   }
 }
 
@@ -144,6 +169,18 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
       res.send(hit.buf);
       return;
     }
+    const pending = photonWarmups.get(cacheKey);
+    if (pending) {
+      await pending.catch(() => {});
+      const warmed = getPhotonMemoryCache(cacheKey);
+      if (warmed) {
+        res.setHeader("Content-Type", warmed.ct);
+        res.setHeader("X-Seed", "PHOTON-LIGHT-WARMED");
+        res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
+        res.send(warmed.buf);
+        return;
+      }
+    }
   }
 
   let audioMap: AudioMap = {};
@@ -185,6 +222,34 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
   } catch (e) {
     res.status(503).json({ error: (e as Error).message });
   }
+});
+
+commentsRouter.post("/comments/warm", async (req, res) => {
+  const { ids, voiceId = "darwin" } = req.body as { ids?: string[]; voiceId?: string };
+  const cleanIds = Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && id.trim()).slice(0, 10) : [];
+  if (cleanIds.length === 0) { res.json({ warmed: 0, queued: 0 }); return; }
+
+  const rows = cleanIds.map((id) => db.prepare("SELECT id, texto, photon_capsule FROM comentarios WHERE id = ? AND storage_mode = 'photon-light'").get(id) as
+    { id: string; texto: string; photon_capsule: string | null } | undefined).filter(Boolean) as
+    { id: string; texto: string; photon_capsule: string | null }[];
+
+  let alreadyWarm = 0;
+  let queued = 0;
+  for (const row of rows) {
+    const cacheKey = photonCacheKey(voiceId, row.photon_capsule, row.texto);
+    if (getPhotonMemoryCache(cacheKey)) {
+      alreadyWarm++;
+      continue;
+    }
+    if (!photonWarmups.has(cacheKey)) {
+      queued++;
+      generatePhotonAudioToMemory(cacheKey, row.texto, voiceId).catch((e) => {
+        console.error("[PhotonWarm] Error:", e);
+      });
+    }
+  }
+
+  res.json({ warmed: alreadyWarm, queued });
 });
 
 // ── POST /comments ────────────────────────────────────────────────────────────

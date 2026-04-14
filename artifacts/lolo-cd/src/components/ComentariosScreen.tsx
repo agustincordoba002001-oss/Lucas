@@ -53,6 +53,19 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
 
   useEffect(() => { cargarPagina(null); }, [refreshKey]);
 
+  useEffect(() => {
+    const ids = comentarios
+      .filter((c) => c.storageMode === "photon-light")
+      .slice(0, 8)
+      .map((c) => c.id);
+    if (ids.length === 0) return;
+    fetch(`${BASE}/api/comments/warm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, voiceId }),
+    }).catch(() => {});
+  }, [comentarios, voiceId]);
+
   const materializar = useCallback(async (c: Comentario): Promise<void> => {
     const res = await fetch(
       `${BASE}/api/comments/${c.id}/audio?voiceId=${encodeURIComponent(voiceId)}`
@@ -214,7 +227,7 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
             COMENTARIOS PHOTON {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            Nexus ultra liviano por defecto · cápsula diminuta · audio se regenera al play
+            Nexus ultra liviano · precalienta en memoria · play casi instantáneo sin guardar audio
           </div>
         </div>
         <div>
