@@ -10,6 +10,7 @@ interface Comentario {
   photonBytes?: number | null;
   photonMode?: string | null;
   photonEncoding?: string | null;
+  storageMode?: string | null;
 }
 interface PageResp   { items: Comentario[]; nextCursor: number | null; }
 interface Props      { voiceId?: string; refreshKey?: number; }
@@ -185,6 +186,7 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
           photonBytes: photonInfo?.estimatedBytes,
           photonMode: photonInfo?.mode,
           photonEncoding: photonInfo?.encoding,
+          storageMode: "photon-light",
         }),
       });
       const nuevo: Comentario = await res.json();
@@ -212,7 +214,7 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
             COMENTARIOS PHOTON {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            solo Photon · guarda cápsula diminuta · primer play/generar guarda audio permanente
+            Nexus ultra liviano por defecto · cápsula diminuta · audio se regenera al play
           </div>
         </div>
         <div>
@@ -288,6 +290,9 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
                       <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
                       {isPhoton && (
                         <span style={{ fontSize: 10, color: "#86efac", fontWeight: 800, background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 5, padding: "1px 6px" }}>PHOTON · {c.photonBytes ?? 27} bytes</span>
+                      )}
+                      {c.storageMode === "photon-light" && (
+                        <span style={{ fontSize: 10, color: "#67e8f9", fontWeight: 800, background: "rgba(6,182,212,0.1)", border: "1px solid rgba(6,182,212,0.22)", borderRadius: 5, padding: "1px 6px" }}>ULTRA LIVIANO</span>
                       )}
                       {isMaterializando && (
                         <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>◈ generando/cacheando Photon...</span>

@@ -10,9 +10,42 @@ const TTS_API        = "http://127.0.0.1:8080/api/tts/generate";
 const TTS_SERVICE    = "http://127.0.0.1:5000";
 
 type AudioMap = Record<string, { ct: string; b64: string }>;
+type PhotonMemoryAudio = { ct: string; buf: Buffer; bytes: number; touched: number };
+
+const PHOTON_MEMORY_LIMIT_BYTES = 50 * 1024 * 1024;
+const photonMemoryCache = new Map<string, PhotonMemoryAudio>();
+let photonMemoryBytes = 0;
 
 function photonCacheKey(voiceId: string, photonCapsule: string | null, texto: string) {
   return photonCapsule ? `photon:${voiceId}:${photonCapsule}:${texto}` : voiceId;
+}
+
+function getPhotonMemoryCache(key: string): PhotonMemoryAudio | undefined {
+  const hit = photonMemoryCache.get(key);
+  if (hit) hit.touched = Date.now();
+  return hit;
+}
+
+function setPhotonMemoryCache(key: string, ct: string, buf: Buffer) {
+  const prev = photonMemoryCache.get(key);
+  if (prev) photonMemoryBytes -= prev.bytes;
+  photonMemoryCache.set(key, { ct, buf, bytes: buf.byteLength, touched: Date.now() });
+  photonMemoryBytes += buf.byteLength;
+
+  while (photonMemoryBytes > PHOTON_MEMORY_LIMIT_BYTES && photonMemoryCache.size > 0) {
+    let oldestKey: string | null = null;
+    let oldestTouched = Number.POSITIVE_INFINITY;
+    for (const [candidateKey, value] of photonMemoryCache.entries()) {
+      if (value.touched < oldestTouched) {
+        oldestTouched = value.touched;
+        oldestKey = candidateKey;
+      }
+    }
+    if (!oldestKey) break;
+    const oldest = photonMemoryCache.get(oldestKey);
+    if (oldest) photonMemoryBytes -= oldest.bytes;
+    photonMemoryCache.delete(oldestKey);
+  }
 }
 
 // ── Frases Semilla ────────────────────────────────────────────────────────────
@@ -33,7 +66,8 @@ db.exec(`
     photon_capsule TEXT,
     photon_bytes INTEGER,
     photon_mode TEXT,
-    photon_encoding TEXT
+    photon_encoding TEXT,
+    storage_mode TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_ts ON comentarios(ts);
   PRAGMA journal_mode=WAL;
@@ -55,6 +89,9 @@ try {
 try {
   db.exec("ALTER TABLE comentarios ADD COLUMN photon_encoding TEXT");
 } catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN storage_mode TEXT");
+} catch { /* columna ya existe */ }
 
 // Migrar desde JSON si la tabla está vacía
 const count = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
@@ -73,8 +110,8 @@ commentsRouter.get("/comments", (req, res) => {
   const cursor = req.query.cursor ? Number(req.query.cursor) : null;
 
   const rows = cursor
-    ? db.prepare("SELECT id, autor, texto, ts, photon_capsule as photonCapsule, photon_bytes as photonBytes, photon_mode as photonMode, photon_encoding as photonEncoding FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
-    : db.prepare("SELECT id, autor, texto, ts, photon_capsule as photonCapsule, photon_bytes as photonBytes, photon_mode as photonMode, photon_encoding as photonEncoding FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
+    ? db.prepare("SELECT id, autor, texto, ts, photon_capsule as photonCapsule, photon_bytes as photonBytes, photon_mode as photonMode, photon_encoding as photonEncoding, storage_mode as storageMode FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
+    : db.prepare("SELECT id, autor, texto, ts, photon_capsule as photonCapsule, photon_bytes as photonBytes, photon_mode as photonMode, photon_encoding as photonEncoding, storage_mode as storageMode FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
 
   const nextCursor = rows.length === limit ? (rows[rows.length - 1] as { ts: number }).ts : null;
   res.json({ items: rows, nextCursor });
@@ -89,19 +126,31 @@ commentsRouter.get("/comments", (req, res) => {
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id      = req.params.id;
   const voiceId = (req.query.voiceId as string | undefined) ?? "darwin";
-  const record  = db.prepare("SELECT texto, audio_data, photon_capsule FROM comentarios WHERE id = ?").get(id) as
-    { texto: string; audio_data: string | null; photon_capsule: string | null } | undefined;
+  const record  = db.prepare("SELECT texto, audio_data, photon_capsule, storage_mode FROM comentarios WHERE id = ?").get(id) as
+    { texto: string; audio_data: string | null; photon_capsule: string | null; storage_mode: string | null } | undefined;
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
   const isPhoton = !!record.photon_capsule;
+  const isPhotonLight = isPhoton && record.storage_mode === "photon-light";
   const cacheKey = photonCacheKey(voiceId, record.photon_capsule, record.texto);
+
+  if (isPhotonLight) {
+    const hit = getPhotonMemoryCache(cacheKey);
+    if (hit) {
+      res.setHeader("Content-Type", hit.ct);
+      res.setHeader("X-Seed", "PHOTON-LIGHT-MEMORY");
+      res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
+      res.send(hit.buf);
+      return;
+    }
+  }
 
   let audioMap: AudioMap = {};
   try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
 
   // ── Replay: audio ya generado, servir directo desde la BD (~5ms) ─────────
-  if (audioMap[cacheKey]?.b64) {
+  if (!isPhotonLight && audioMap[cacheKey]?.b64) {
     const { ct, b64 } = audioMap[cacheKey];
     res.setHeader("Content-Type", ct);
     res.setHeader("X-Seed", isPhoton ? "PHOTON-CACHED" : "CACHED");
@@ -121,12 +170,16 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
     const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
-    db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
-      .run(JSON.stringify(audioMap), id);
+    if (isPhotonLight) {
+      setPhotonMemoryCache(cacheKey, ct, buf);
+    } else {
+      audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
+      db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
+        .run(JSON.stringify(audioMap), id);
+    }
 
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", isPhoton ? "PHOTON-MATERIALIZED" : "MATERIALIZED");
+    res.setHeader("X-Seed", isPhotonLight ? "PHOTON-LIGHT-REGENERATED" : isPhoton ? "PHOTON-MATERIALIZED" : "MATERIALIZED");
     if (isPhoton) res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
     res.send(buf);
   } catch (e) {
@@ -136,13 +189,14 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
 // ── POST /comments ────────────────────────────────────────────────────────────
 commentsRouter.post("/comments", (req, res) => {
-  const { autor = "Anónimo", texto, photonCapsule, photonBytes, photonMode, photonEncoding, voiceId = "darwin", audioData } = req.body as {
+  const { autor = "Anónimo", texto, photonCapsule, photonBytes, photonMode, photonEncoding, storageMode = "photon-permanent", voiceId = "darwin", audioData } = req.body as {
     autor?: string;
     texto?: string;
     photonCapsule?: string;
     photonBytes?: number;
     photonMode?: string;
     photonEncoding?: string;
+    storageMode?: string;
     voiceId?: string;
     audioData?: { ct?: string; b64?: string };
   };
@@ -150,13 +204,14 @@ commentsRouter.post("/comments", (req, res) => {
   if (!photonCapsule?.trim()) { res.status(400).json({ error: "cápsula Photon requerida" }); return; }
   const id = Date.now().toString();
   let initialAudioData: string | null = null;
-  if (audioData?.b64?.trim()) {
+  const safeStorageMode = storageMode === "photon-light" ? "photon-light" : "photon-permanent";
+  if (safeStorageMode === "photon-permanent" && audioData?.b64?.trim()) {
     const safeVoiceId = typeof voiceId === "string" && voiceId.trim() ? voiceId.trim() : "darwin";
     const safeCt = audioData.ct?.trim() || "audio/wav";
     const cacheKey = photonCacheKey(safeVoiceId, photonCapsule.trim(), texto.trim());
     initialAudioData = JSON.stringify({ [cacheKey]: { ct: safeCt, b64: audioData.b64.trim() } });
   }
-  db.prepare("INSERT INTO comentarios (id, autor, texto, audio_data, photon_capsule, photon_bytes, photon_mode, photon_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO comentarios (id, autor, texto, audio_data, photon_capsule, photon_bytes, photon_mode, photon_encoding, storage_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     id,
     (autor.trim() || "Anónimo"),
     texto.trim(),
@@ -165,6 +220,7 @@ commentsRouter.post("/comments", (req, res) => {
     Number.isFinite(photonBytes) ? photonBytes : null,
     photonMode?.trim() || null,
     photonEncoding?.trim() || null,
+    safeStorageMode,
   );
   res.status(201).json({
     id,
@@ -174,6 +230,7 @@ commentsRouter.post("/comments", (req, res) => {
     photonBytes: Number.isFinite(photonBytes) ? photonBytes : null,
     photonMode: photonMode?.trim() || null,
     photonEncoding: photonEncoding?.trim() || null,
+    storageMode: safeStorageMode,
   });
 });
 

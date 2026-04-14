@@ -28,6 +28,7 @@ export default function App() {
   const [generatedPhoton, setGeneratedPhoton] = useState<PhotonPublishInfo | null>(null);
   const [publishLoading, setPublishLoading] = useState(false);
   const [publishMessage, setPublishMessage] = useState<string | null>(null);
+  const [publishMode, setPublishMode] = useState<"photon-light" | "photon-permanent">("photon-light");
   const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
   const fileInputRef    = useRef<HTMLInputElement>(null);
   const audioRef        = useRef<HTMLAudioElement>(null);
@@ -173,7 +174,7 @@ export default function App() {
     setPublishLoading(true);
     setPublishMessage(null);
     try {
-      const b64 = await blobToBase64(generatedAudioBlob);
+      const b64 = publishMode === "photon-permanent" ? await blobToBase64(generatedAudioBlob) : "";
       const res = await fetch(`${BASE}/api/comments`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -184,13 +185,16 @@ export default function App() {
           photonBytes: generatedPhoton.estimatedBytes,
           photonMode: generatedPhoton.mode,
           photonEncoding: generatedPhoton.encoding,
+          storageMode: publishMode,
           voiceId,
-          audioData: { ct: generatedAudioType, b64 },
+          audioData: publishMode === "photon-permanent" ? { ct: generatedAudioType, b64 } : undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as { error?: string }).error ?? "Error publicando comentario");
-      setPublishMessage("Comentario Photon publicado con audio permanente.");
+      setPublishMessage(publishMode === "photon-light"
+        ? "Comentario Nexus/Photon ultra liviano publicado. No guarda audio pesado."
+        : "Comentario Photon publicado con audio permanente.");
       setCommentsRefreshKey((n) => n + 1);
     } catch (e) {
       setPublishMessage((e as Error).message);
@@ -363,16 +367,30 @@ export default function App() {
               <a href={audioUrl} download="darwin.wav" style={{ display: "block", marginTop: 8, textAlign: "center", color: "#52525b", fontSize: 12, textDecoration: "none" }}>
                 Descargar audio
               </a>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                <button
+                  onClick={() => setPublishMode("photon-light")}
+                  style={{ padding: "9px", borderRadius: 9, border: publishMode === "photon-light" ? "1px solid rgba(34,197,94,0.55)" : "1px solid #27272a", background: publishMode === "photon-light" ? "rgba(34,197,94,0.14)" : "#18181b", color: publishMode === "photon-light" ? "#86efac" : "#71717a", cursor: "pointer", fontSize: 12, fontWeight: 800 }}
+                >
+                  Nexus ultra liviano
+                </button>
+                <button
+                  onClick={() => setPublishMode("photon-permanent")}
+                  style={{ padding: "9px", borderRadius: 9, border: publishMode === "photon-permanent" ? "1px solid rgba(168,85,247,0.55)" : "1px solid #27272a", background: publishMode === "photon-permanent" ? "rgba(168,85,247,0.14)" : "#18181b", color: publishMode === "photon-permanent" ? "#d8b4fe" : "#71717a", cursor: "pointer", fontSize: 12, fontWeight: 800 }}
+                >
+                  Audio permanente
+                </button>
+              </div>
               <button
                 onClick={publicarComentarioPhoton}
                 disabled={!generatedAudioBlob || !generatedPhoton || publishLoading}
                 style={{ marginTop: 10, width: "100%", padding: "11px", borderRadius: 10, border: "none", cursor: generatedAudioBlob && generatedPhoton && !publishLoading ? "pointer" : "not-allowed", background: generatedAudioBlob && generatedPhoton && !publishLoading ? "rgba(34,197,94,0.16)" : "#18181b", color: generatedAudioBlob && generatedPhoton && !publishLoading ? "#86efac" : "#52525b", fontSize: 13, fontWeight: 800 }}
               >
-                {publishLoading ? "Publicando..." : generatedPhoton ? "✦ Publicar comentario Photon" : "Preparando Photon..."}
+                {publishLoading ? "Publicando..." : generatedPhoton ? publishMode === "photon-light" ? "✦ Publicar Nexus ultra liviano" : "✦ Publicar con audio permanente" : "Preparando Photon..."}
               </button>
               {generatedPhoton && (
                 <div style={{ color: "#86efac", fontSize: 11, marginTop: 8, textAlign: "center" }}>
-                  Photon listo · {generatedPhoton.estimatedBytes} bytes · audio se guardará permanente
+                  Photon listo · {generatedPhoton.estimatedBytes} bytes · {publishMode === "photon-light" ? "1M comentarios ≈ 0.027 GB + texto" : "audio se guardará permanente"}
                 </div>
               )}
               {publishMessage && (
