@@ -330,3 +330,9 @@ id = "RB9_d9UoPJhJIUujIjxBJ"
 uri = "file://diever_muñoz_clonado.wav"
 type = "audio"
 title = "Voz clonada de Diever Muñoz — Motor Lolo CD"
+
+[[outputs]]
+id = "XiGwl5omMJDo-4LqNs_HE"
+uri = "file://exports/photon_ultraliviano_demo.wav"
+type = "audio"
+title = "Audio demo Photon ultraliviano"
