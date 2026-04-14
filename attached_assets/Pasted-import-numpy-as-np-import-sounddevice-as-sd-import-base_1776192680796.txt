@@ -1,0 +1,59 @@
+import numpy as np
+import sounddevice as sd
+import base64
+import time
+
+class MotorFantasma:
+    def __init__(self):
+        self.fs = 44100  # Calidad de estudio
+        self.multiplicador_secreto = 1.61803398875 # Proporción áurea
+
+    def codificar_a_letra(self, duracion=2):
+        """Convierte tu voz en una única letra/cadena fantasma"""
+        print("🎤 Hablá ahora... capturando ADN de voz...")
+        grabacion = sd.rec(int(duracion * self.fs), samplerate=self.fs, channels=1)
+        sd.wait()
+        
+        # Transformada de Fourier para obtener las frecuencias dominantes
+        # Esto convierte el sonido en números puros
+        frecuencias = np.fft.fft(grabacion.flatten())
+        semilla = np.abs(frecuencias[:100]).astype(int)
+        
+        # Convertimos esos números en una "Letra Única" (Base64)
+        cadena_fantasma = base64.b62encode(semilla.tobytes()).decode('utf-8')[:15]
+        return cadena_fantasma
+
+    def play_desde_letra(self, letra):
+        """El audio NO existe hasta que este motor multiplica la letra"""
+        print(f"👻 Invocando audio desde el glifo: {letra}")
+        
+        # Convertimos la letra de vuelta a una semilla numérica
+        semilla_num = sum(ord(c) for c in letra) * self.multiplicador_secreto
+        
+        # Generamos la onda desde CERO usando la semilla
+        t = np.linspace(0, 2, 2 * self.fs)
+        
+        # Esta es la multiplicación 'nunca antes escuchada'
+        # Crea una textura sonora única basada en el valor ASCII de tu letra
+        onda = np.sin(2 * np.pi * (semilla_num % 500) * t) * np.exp(-t*2)
+        
+        # Aplicamos un armónico fantasma
+        onda += 0.5 * np.sin(2 * np.pi * (semilla_num % 1000) * t)
+        
+        sd.play(onda / np.max(np.abs(onda)), self.fs)
+        sd.wait()
+        print("✨ El audio se ha desvanecido. RAM limpia.")
+
+# --- PRUEBA DEL SISTEMA ---
+motor = MotorFantasma()
+
+# 1. Grabás y el sistema te devuelve SOLO una letra
+# Esto es lo único que guardarías en tu base de datos de Nexus
+letra_guardada = motor.codificar_a_letra(duracion=2)
+print(f"\n💾 Letra generada para el servidor: {letra_guardada}")
+
+print("\n--- EL AUDIO YA NO EXISTE EN NINGÚN LADO ---")
+time.sleep(2)
+
+# 2. Cuando el usuario da PLAY, la letra se multiplica y suena
+motor.play_desde_letra(letra_guardada)
