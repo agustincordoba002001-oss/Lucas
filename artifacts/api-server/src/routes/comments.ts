@@ -1,7 +1,6 @@
 import { Router }      from "express";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readFileSync } from "fs";
-import { spawn }        from "child_process";
 
 const commentsRouter = Router();
 
@@ -9,24 +8,57 @@ const DB_PATH   = "/home/runner/workspace/comments.db";
 const JSON_PATH = "/home/runner/workspace/comments.json";
 const TTS_API   = "http://127.0.0.1:8080/api/tts/generate";
 
-const db = new DatabaseSync(DB_PATH);
+// ── RAM Sleep Chamber ─────────────────────────────────────────────────────────
+//
+//  El audio vive en RAM, nunca en disco.
+//  Se genera UNA SOLA VEZ por semilla y queda dormido en el Sleep Chamber.
+//  Al darle play → materializa al instante desde RAM.
+//  Al terminar → vuelve a dormir en RAM (sigue ahí, cero regeneración).
+//  Si la RAM está llena → evicta el audio menos usado (el más dormido).
+//  Si el servidor se reinicia → la primera vez regenera y vuelve a dormir.
+//
+const CHAMBER_MAX = 500;  // máximo de audios dormidos en RAM simultáneos
 
-// La semilla guarda texto + audio comprimido como texto (Base64 de Opus)
-// Primera vez: genera, comprime, guarda para siempre.
-// Siguientes veces: materializa instantáneo desde la semilla.
+interface Sleeping {
+  buf:        Buffer;
+  contentType: string;
+  lastWoken:  number;   // última vez que materializó
+  generated:  number;   // cuándo fue generado
+}
+
+const chamber = new Map<string, Sleeping>();
+
+function sleep(id: string, buf: Buffer, ct: string) {
+  chamber.set(id, { buf, contentType: ct, lastWoken: Date.now(), generated: Date.now() });
+  // Si superamos el límite, evictar el que lleva más tiempo sin materializar
+  if (chamber.size > CHAMBER_MAX) {
+    let oldestKey = "";
+    let oldestTime = Infinity;
+    for (const [k, s] of chamber) {
+      if (s.lastWoken < oldestTime) { oldestTime = s.lastWoken; oldestKey = k; }
+    }
+    if (oldestKey) chamber.delete(oldestKey);
+  }
+}
+
+function wakeUp(id: string): Sleeping | undefined {
+  const s = chamber.get(id);
+  if (s) s.lastWoken = Date.now();
+  return s;
+}
+
+// ── SQLite — solo texto, cero audio en disco ──────────────────────────────────
+const db = new DatabaseSync(DB_PATH);
 db.exec(`
   CREATE TABLE IF NOT EXISTS comentarios (
-    id        TEXT PRIMARY KEY,
-    autor     TEXT NOT NULL,
-    texto     TEXT NOT NULL,
-    audio_b64 TEXT,
-    ts        INTEGER NOT NULL DEFAULT (unixepoch())
+    id    TEXT PRIMARY KEY,
+    autor TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    ts    INTEGER NOT NULL DEFAULT (unixepoch())
   );
   CREATE INDEX IF NOT EXISTS idx_ts ON comentarios(ts);
   PRAGMA journal_mode=WAL;
 `);
-
-try { db.exec("ALTER TABLE comentarios ADD COLUMN audio_b64 TEXT"); } catch { /* ya existe */ }
 
 // Migrar desde JSON si la tabla está vacía
 const count = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
@@ -35,28 +67,8 @@ if (count.n === 0 && existsSync(JSON_PATH)) {
     const items = JSON.parse(readFileSync(JSON_PATH, "utf8")) as { id: string; autor: string; texto: string }[];
     const ins   = db.prepare("INSERT OR IGNORE INTO comentarios (id, autor, texto) VALUES (?, ?, ?)");
     for (const c of items) ins.run(c.id, c.autor, c.texto);
-    console.log(`[DB] Migrados ${items.length} comentarios → SQLite`);
-  } catch (e) { console.error("[DB] Error migrando:", e); }
-}
-
-// ── WAV → Opus (en memoria, cero disco, ~10x más liviano que WAV) ─────────────
-function wavToOpus(wavBuf: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const ff = spawn("ffmpeg", [
-      "-f", "wav", "-i", "pipe:0",
-      "-c:a", "libopus", "-b:a", "24k", "-vbr", "on",
-      "-compression_level", "10", "-application", "voip",
-      "-f", "ogg", "pipe:1",
-    ], { stdio: ["pipe", "pipe", "pipe"] });
-    const chunks: Buffer[] = [];
-    ff.stdout.on("data", (d: Buffer) => chunks.push(d));
-    ff.stderr.on("data", () => {});
-    ff.on("close", code =>
-      code === 0 ? resolve(Buffer.concat(chunks)) : reject(new Error(`ffmpeg error ${code}`))
-    );
-    ff.stdin.write(wavBuf);
-    ff.stdin.end();
-  });
+    console.log(`[SleepChamber] Migrados ${items.length} comentarios`);
+  } catch (e) { console.error("[SleepChamber] Error migrando:", e); }
 }
 
 // ── GET /comments?cursor=<ts>&limit=<n> ──────────────────────────────────────
@@ -65,34 +77,38 @@ commentsRouter.get("/comments", (req, res) => {
   const cursor = req.query.cursor ? Number(req.query.cursor) : null;
 
   const rows = cursor
-    ? db.prepare("SELECT id, autor, texto, (audio_b64 IS NOT NULL) as hasAudio, ts FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
-    : db.prepare("SELECT id, autor, texto, (audio_b64 IS NOT NULL) as hasAudio, ts FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
+    ? db.prepare("SELECT id, autor, texto, ts FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
+    : db.prepare("SELECT id, autor, texto, ts FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
 
   const nextCursor = rows.length === limit ? (rows[rows.length - 1] as { ts: number }).ts : null;
-  res.json({ items: rows, nextCursor });
+
+  const items = (rows as { id: string; autor: string; texto: string; ts: number }[]).map(r => ({
+    ...r,
+    sleeping: chamber.has(r.id),  // true = ya generado, duerme en RAM listo para materializar
+  }));
+
+  res.json({ items, nextCursor });
 });
 
-// ── GET /comments/:id/audio ───────────────────────────────────────────────────
-// Si la semilla ya tiene audio → materializa al instante (sin red, sin generar nada).
-// Si no tiene audio → genera una sola vez, lo graba en la semilla para siempre.
+// ── GET /comments/:id/audio — materializar ────────────────────────────────────
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id      = req.params.id;
   const voiceId = (req.query.voiceId as string | undefined) ?? "darwin";
-  const record  = db.prepare("SELECT texto, audio_b64 FROM comentarios WHERE id = ?").get(id) as
-    { texto: string; audio_b64: string | null } | undefined;
+  const record  = db.prepare("SELECT texto FROM comentarios WHERE id = ?").get(id) as
+    { texto: string } | undefined;
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
-  // ── Audio ya vive en la semilla → materializa al instante ─────────────────
-  if (record.audio_b64) {
-    const buf = Buffer.from(record.audio_b64, "base64");
-    res.setHeader("Content-Type", "audio/ogg; codecs=opus");
-    res.setHeader("X-Seed", "HIT");
-    res.send(buf);
+  // ── Duerme en RAM → materializa al instante ───────────────────────────────
+  const sleeping = wakeUp(id);
+  if (sleeping) {
+    res.setHeader("Content-Type", sleeping.contentType);
+    res.setHeader("X-Chamber", "AWAKE");
+    res.send(sleeping.buf);
     return;
   }
 
-  // ── Primera y única vez: generar, comprimir, grabar en la semilla ──────────
+  // ── Primera vez (o reinicio): generar una sola vez y poner a dormir ───────
   try {
     const ttsRes = await fetch(TTS_API, {
       method:  "POST",
@@ -100,20 +116,32 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
       body:    JSON.stringify({ texto: record.texto, voiceId }),
     });
     if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status}`);
-    const wavBuf  = Buffer.from(await ttsRes.arrayBuffer());
-    const opusBuf = await wavToOpus(wavBuf);
-    const b64     = opusBuf.toString("base64");
+    const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
+    const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    // Grabar en la semilla — nunca más se genera
-    db.prepare("UPDATE comentarios SET audio_b64 = ? WHERE id = ?").run(b64, id);
-    console.log(`[SeedAudio] ${id} grabado — WAV ${(wavBuf.length/1024).toFixed(0)}KB → Opus ${(opusBuf.length/1024).toFixed(0)}KB`);
+    // Poner a dormir en RAM — no toca el disco nunca
+    sleep(id, buf, ct);
+    console.log(`[SleepChamber] "${id}" generado y dormido — ${(buf.length/1024).toFixed(0)} KB en RAM`);
 
-    res.setHeader("Content-Type", "audio/ogg; codecs=opus");
-    res.setHeader("X-Seed", "MISS");
-    res.send(opusBuf);
+    res.setHeader("Content-Type", ct);
+    res.setHeader("X-Chamber", "GENERATED");
+    res.send(buf);
   } catch (e) {
     res.status(503).json({ error: (e as Error).message });
   }
+});
+
+// ── GET /comments/chamber/status ─────────────────────────────────────────────
+commentsRouter.get("/comments/chamber/status", (_req, res) => {
+  const total   = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
+  const sleeping = chamber.size;
+  const ramBytes = [...chamber.values()].reduce((s, g) => s + g.buf.length, 0);
+  res.json({
+    total_seeds:    total.n,
+    sleeping_in_ram: sleeping,
+    ram_kb:         Math.round(ramBytes / 1024),
+    disk_audio_kb:  0,
+  });
 });
 
 // ── POST /comments ────────────────────────────────────────────────────────────
@@ -124,11 +152,12 @@ commentsRouter.post("/comments", (req, res) => {
   db.prepare("INSERT INTO comentarios (id, autor, texto) VALUES (?, ?, ?)").run(
     id, (autor.trim() || "Anónimo"), texto.trim()
   );
-  res.status(201).json({ id, autor: autor.trim() || "Anónimo", texto: texto.trim(), hasAudio: 0 });
+  res.status(201).json({ id, autor: autor.trim() || "Anónimo", texto: texto.trim(), sleeping: false });
 });
 
 // ── DELETE /comments/:id ──────────────────────────────────────────────────────
 commentsRouter.delete("/comments/:id", (req, res) => {
+  chamber.delete(req.params.id);
   db.prepare("DELETE FROM comentarios WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });

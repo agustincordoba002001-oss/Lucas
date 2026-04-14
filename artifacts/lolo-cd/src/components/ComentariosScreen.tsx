@@ -2,22 +2,24 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface Comentario { id: string; autor: string; texto: string; hasAudio: number; }
+interface Comentario { id: string; autor: string; texto: string; sleeping: boolean; }
 interface PageResp   { items: Comentario[]; nextCursor: number | null; }
+interface ChamberStatus { total_seeds: number; sleeping_in_ram: number; ram_kb: number; disk_audio_kb: number; }
 
 interface Props { voiceId?: string; }
 
 export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
-  const [comentarios, setComentarios]     = useState<Comentario[]>([]);
-  const [nextCursor, setNextCursor]       = useState<number | null>(null);
-  const [cargando, setCargando]           = useState(false);
-  const [reproduciendo, setReproduciendo] = useState(false);
-  const [indiceActual, setIndiceActual]   = useState<number | null>(null);
-  const [grabandoIdx, setGrabandoIdx]     = useState<number | null>(null);
-  const [error, setError]                 = useState<string | null>(null);
-  const [nuevoAutor, setNuevoAutor]       = useState("");
-  const [nuevoTexto, setNuevoTexto]       = useState("");
-  const [enviando, setEnviando]           = useState(false);
+  const [comentarios, setComentarios]       = useState<Comentario[]>([]);
+  const [nextCursor, setNextCursor]         = useState<number | null>(null);
+  const [cargando, setCargando]             = useState(false);
+  const [reproduciendo, setReproduciendo]   = useState(false);
+  const [indiceActual, setIndiceActual]     = useState<number | null>(null);
+  const [generandoIdx, setGenerandoIdx]     = useState<number | null>(null);
+  const [error, setError]                   = useState<string | null>(null);
+  const [nuevoAutor, setNuevoAutor]         = useState("");
+  const [nuevoTexto, setNuevoTexto]         = useState("");
+  const [enviando, setEnviando]             = useState(false);
+  const [chamber, setChamber]               = useState<ChamberStatus | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef(false);
@@ -36,23 +38,30 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     finally { setCargando(false); }
   }, [cargando]);
 
-  useEffect(() => { cargarPagina(null); }, []);
+  const cargarChamber = useCallback(async () => {
+    try {
+      const s: ChamberStatus = await fetch(`${BASE}/api/comments/chamber/status`).then(r => r.json());
+      setChamber(s);
+    } catch { /* ignorar */ }
+  }, []);
 
-  // ── Materializar y reproducir ─────────────────────────────────────────────
-  // Si el audio ya está grabado en la semilla → materializa al instante.
-  // Si es la primera vez → genera UNA SOLA VEZ, graba en la semilla para siempre.
+  useEffect(() => { cargarPagina(null); cargarChamber(); }, []);
+
+  // ── Materializar audio desde RAM (o generar por primera vez) ──────────────
   const materializar = useCallback(async (c: Comentario): Promise<void> => {
     const res = await fetch(
       `${BASE}/api/comments/${c.id}/audio?voiceId=${encodeURIComponent(voiceId)}`
     );
     if (!res.ok) throw new Error(`Error ${res.status}`);
 
-    const seedHit = res.headers.get("x-seed") === "HIT";
-    if (!seedHit) {
-      setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, hasAudio: 1 } : x));
+    const chamberState = res.headers.get("x-chamber");
+    if (chamberState !== "AWAKE") {
+      // Recién generado — marcar como dormido en RAM
+      setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, sleeping: true } : x));
+      cargarChamber();
     }
 
-    const ct  = res.headers.get("content-type") ?? "audio/ogg";
+    const ct  = res.headers.get("content-type") ?? "audio/wav";
     const url = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: ct }));
     const audio = new Audio(url);
     audioRef.current = audio;
@@ -61,24 +70,18 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error")); };
       audio.play().catch(reject);
     });
-  }, [voiceId]);
+  }, [voiceId, cargarChamber]);
 
   const reproducirUno = useCallback(async (c: Comentario, idx: number) => {
     if (reproduciendo) return;
     abortRef.current = false;
     setReproduciendo(true);
     setIndiceActual(idx);
-    setGrabandoIdx(c.hasAudio ? null : idx);
+    setGenerandoIdx(c.sleeping ? null : idx);
     setError(null);
-    try {
-      await materializar(c);
-    } catch (e) {
-      if (!abortRef.current) setError((e as Error).message);
-    } finally {
-      setReproduciendo(false);
-      setIndiceActual(null);
-      setGrabandoIdx(null);
-    }
+    try { await materializar(c); }
+    catch (e) { if (!abortRef.current) setError((e as Error).message); }
+    finally { setReproduciendo(false); setIndiceActual(null); setGenerandoIdx(null); }
   }, [materializar, reproduciendo]);
 
   const leerTodos = useCallback(async () => {
@@ -89,14 +92,14 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     for (let i = 0; i < comentarios.length; i++) {
       if (abortRef.current) break;
       setIndiceActual(i);
-      setGrabandoIdx(comentarios[i].hasAudio ? null : i);
+      setGenerandoIdx(comentarios[i].sleeping ? null : i);
       try { await materializar(comentarios[i]); }
       catch (e) { if (!abortRef.current) { setError((e as Error).message); break; } }
-      setGrabandoIdx(null);
+      setGenerandoIdx(null);
     }
     setReproduciendo(false);
     setIndiceActual(null);
-    setGrabandoIdx(null);
+    setGenerandoIdx(null);
   }, [comentarios, materializar, reproduciendo]);
 
   const detener = useCallback(() => {
@@ -104,7 +107,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     audioRef.current?.pause();
     setReproduciendo(false);
     setIndiceActual(null);
-    setGrabandoIdx(null);
+    setGenerandoIdx(null);
   }, []);
 
   const agregarComentario = async () => {
@@ -119,8 +122,8 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       });
       const nuevo: Comentario = await res.json();
       setComentarios(prev => [nuevo, ...prev]);
-      setNuevoAutor("");
-      setNuevoTexto("");
+      setNuevoAutor(""); setNuevoTexto("");
+      cargarChamber();
     } catch { setError("Error al guardar"); }
     finally { setEnviando(false); }
   };
@@ -129,26 +132,27 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     if (reproduciendo) detener();
     setComentarios(prev => prev.filter(c => c.id !== id));
     await fetch(`${BASE}/api/comments/${id}`, { method: "DELETE" }).catch(() => {});
+    cargarChamber();
   };
 
-  const conAudio = comentarios.filter(c => c.hasAudio).length;
+  const durmiendo = comentarios.filter(c => c.sleeping).length;
 
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
           <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
             FRASES SEMILLA {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
-          {conAudio > 0 && (
-            <span style={{ marginLeft: 10, fontSize: 11, color: "#86efac", fontWeight: 700 }}>
-              ⚡ {conAudio} materializable al instante
+          {durmiendo > 0 && (
+            <span style={{ marginLeft: 10, fontSize: 11, color: "#c4b5fd", fontWeight: 700 }}>
+              💤 {durmiendo} dormidos en RAM
             </span>
           )}
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            texto eterno · audio grabado una sola vez · materializa instantáneo · Opus ~15 KB/frase
+            texto en disco · audio duerme en RAM · materializa al instante · disco audio: 0 bytes
           </div>
         </div>
         <div>
@@ -159,22 +163,26 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         </div>
       </div>
 
+      {/* Sleep Chamber status */}
+      {chamber && (
+        <div style={{ background: "#0d0d10", borderRadius: 8, padding: "8px 14px", border: "1px solid #1f1f23", marginBottom: 14, display: "flex", gap: 20, fontSize: 11, flexWrap: "wrap" }}>
+          <span style={{ color: "#52525b" }}>💤 RAM: <span style={{ color: "#c4b5fd", fontWeight: 700 }}>{chamber.ram_kb} KB</span></span>
+          <span style={{ color: "#52525b" }}>Dormidos: <span style={{ color: "#c4b5fd", fontWeight: 700 }}>{chamber.sleeping_in_ram}</span></span>
+          <span style={{ color: "#52525b" }}>Semillas totales: <span style={{ color: "#e4e4e7", fontWeight: 700 }}>{chamber.total_seeds}</span></span>
+          <span style={{ color: "#52525b" }}>Disco audio: <span style={{ color: "#86efac", fontWeight: 700 }}>0 bytes</span></span>
+        </div>
+      )}
+
       {/* Formulario */}
       <div style={{ background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a", marginBottom: 16 }}>
         <div style={{ color: "#71717a", fontSize: 11, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>NUEVA FRASE SEMILLA</div>
-        <input
-          value={nuevoAutor} onChange={e => setNuevoAutor(e.target.value)}
-          placeholder="Nombre (opcional)"
-          style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }}
-        />
-        <textarea
-          value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)}
+        <input value={nuevoAutor} onChange={e => setNuevoAutor(e.target.value)} placeholder="Nombre (opcional)"
+          style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }} />
+        <textarea value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agregarComentario(); } }}
           placeholder="Escribí la frase... (Enter para guardar)" rows={2}
-          style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" }}
-        />
-        <button
-          onClick={agregarComentario} disabled={!nuevoTexto.trim() || enviando}
+          style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" }} />
+        <button onClick={agregarComentario} disabled={!nuevoTexto.trim() || enviando}
           style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: nuevoTexto.trim() && !enviando ? "pointer" : "not-allowed", background: nuevoTexto.trim() && !enviando ? "rgba(168,85,247,0.15)" : "#18181b", color: nuevoTexto.trim() && !enviando ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600 }}>
           {enviando ? "Guardando..." : "✦ Guardar frase semilla"}
         </button>
@@ -191,19 +199,19 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         {comentarios.length === 0 && !cargando
           ? <div style={{ color: "#3f3f46", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Sin frases — guardá una arriba</div>
           : comentarios.map((c, i) => {
-            const isPlaying  = indiceActual === i;
-            const isGrabando = grabandoIdx === i;
+            const isPlaying   = indiceActual === i;
+            const isGenerando = generandoIdx === i;
             return (
               <div key={c.id} style={{ background: isPlaying ? "rgba(168,85,247,0.08)" : "#111113", border: `1px solid ${isPlaying ? "rgba(168,85,247,0.4)" : "#27272a"}`, borderRadius: 10, padding: "10px 14px", transition: "all 0.2s", display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    {isPlaying && !isGrabando && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
+                    {isPlaying && !isGenerando && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
                     <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
-                    {isGrabando
-                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ grabando en semilla...</span>
-                      : c.hasAudio
-                        ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 700 }}>⚡ materializa al instante</span>
-                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ solo texto · primer play graba el audio</span>
+                    {isGenerando
+                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⚡ generando y poniendo a dormir...</span>
+                      : c.sleeping
+                        ? <span style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700 }}>💤 dormido en RAM · materializa al instante</span>
+                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ solo texto · primer play genera el audio</span>
                     }
                   </div>
                   <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
@@ -211,8 +219,8 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
                   {!reproduciendo && (
                     <button onClick={() => reproducirUno(c, i)}
-                      style={{ background: c.hasAudio ? "rgba(34,197,94,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.hasAudio ? "rgba(34,197,94,0.3)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.hasAudio ? "#86efac" : "#d8b4fe", fontSize: 12, padding: "4px 9px", borderRadius: 6, fontWeight: 700 }}>
-                      {c.hasAudio ? "⚡" : "▶"}
+                      style={{ background: c.sleeping ? "rgba(196,181,253,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.sleeping ? "rgba(196,181,253,0.35)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.sleeping ? "#c4b5fd" : "#d8b4fe", fontSize: 12, padding: "4px 9px", borderRadius: 6, fontWeight: 700 }}>
+                      {c.sleeping ? "💤" : "▶"}
                     </button>
                   )}
                   <button onClick={() => eliminar(c.id)}
