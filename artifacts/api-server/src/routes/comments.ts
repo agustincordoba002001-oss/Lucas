@@ -23,7 +23,11 @@ db.exec(`
     autor      TEXT NOT NULL,
     texto      TEXT NOT NULL,
     ts         INTEGER NOT NULL DEFAULT (unixepoch()),
-    audio_data TEXT
+    audio_data TEXT,
+    photon_capsule TEXT,
+    photon_bytes INTEGER,
+    photon_mode TEXT,
+    photon_encoding TEXT
   );
   CREATE INDEX IF NOT EXISTS idx_ts ON comentarios(ts);
   PRAGMA journal_mode=WAL;
@@ -32,6 +36,18 @@ db.exec(`
 // Migrar columna si la tabla ya existía sin audio_data
 try {
   db.exec("ALTER TABLE comentarios ADD COLUMN audio_data TEXT");
+} catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN photon_capsule TEXT");
+} catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN photon_bytes INTEGER");
+} catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN photon_mode TEXT");
+} catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN photon_encoding TEXT");
 } catch { /* columna ya existe */ }
 
 // Migrar desde JSON si la tabla está vacía
@@ -51,8 +67,8 @@ commentsRouter.get("/comments", (req, res) => {
   const cursor = req.query.cursor ? Number(req.query.cursor) : null;
 
   const rows = cursor
-    ? db.prepare("SELECT id, autor, texto, ts FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
-    : db.prepare("SELECT id, autor, texto, ts FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
+    ? db.prepare("SELECT id, autor, texto, ts, photon_capsule as photonCapsule, photon_bytes as photonBytes, photon_mode as photonMode, photon_encoding as photonEncoding FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
+    : db.prepare("SELECT id, autor, texto, ts, photon_capsule as photonCapsule, photon_bytes as photonBytes, photon_mode as photonMode, photon_encoding as photonEncoding FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
 
   const nextCursor = rows.length === limit ? (rows[rows.length - 1] as { ts: number }).ts : null;
   res.json({ items: rows, nextCursor });
@@ -67,8 +83,8 @@ commentsRouter.get("/comments", (req, res) => {
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id      = req.params.id;
   const voiceId = (req.query.voiceId as string | undefined) ?? "darwin";
-  const record  = db.prepare("SELECT texto, audio_data FROM comentarios WHERE id = ?").get(id) as
-    { texto: string; audio_data: string | null } | undefined;
+  const record  = db.prepare("SELECT texto, audio_data, photon_capsule FROM comentarios WHERE id = ?").get(id) as
+    { texto: string; audio_data: string | null; photon_capsule: string | null } | undefined;
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
@@ -77,7 +93,7 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
   try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
 
   // ── Replay: audio ya generado, servir directo desde la BD (~5ms) ─────────
-  if (audioMap[voiceId]?.b64) {
+  if (!record.photon_capsule && audioMap[voiceId]?.b64) {
     const { ct, b64 } = audioMap[voiceId];
     res.setHeader("Content-Type", ct);
     res.setHeader("X-Seed", "CACHED");
@@ -96,12 +112,14 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
     const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    audioMap[voiceId] = { ct, b64: buf.toString("base64") };
-    db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
-      .run(JSON.stringify(audioMap), id);
+    if (!record.photon_capsule) {
+      audioMap[voiceId] = { ct, b64: buf.toString("base64") };
+      db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
+        .run(JSON.stringify(audioMap), id);
+    }
 
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", "MATERIALIZED");
+    res.setHeader("X-Seed", record.photon_capsule ? "PHOTON-REGENERATED" : "MATERIALIZED");
     res.send(buf);
   } catch (e) {
     res.status(503).json({ error: (e as Error).message });
@@ -110,13 +128,34 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
 // ── POST /comments ────────────────────────────────────────────────────────────
 commentsRouter.post("/comments", (req, res) => {
-  const { autor = "Anónimo", texto } = req.body as { autor?: string; texto?: string };
+  const { autor = "Anónimo", texto, photonCapsule, photonBytes, photonMode, photonEncoding } = req.body as {
+    autor?: string;
+    texto?: string;
+    photonCapsule?: string;
+    photonBytes?: number;
+    photonMode?: string;
+    photonEncoding?: string;
+  };
   if (!texto?.trim()) { res.status(400).json({ error: "texto requerido" }); return; }
   const id = Date.now().toString();
-  db.prepare("INSERT INTO comentarios (id, autor, texto) VALUES (?, ?, ?)").run(
-    id, (autor.trim() || "Anónimo"), texto.trim()
+  db.prepare("INSERT INTO comentarios (id, autor, texto, photon_capsule, photon_bytes, photon_mode, photon_encoding) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+    id,
+    (autor.trim() || "Anónimo"),
+    texto.trim(),
+    photonCapsule?.trim() || null,
+    Number.isFinite(photonBytes) ? photonBytes : null,
+    photonMode?.trim() || null,
+    photonEncoding?.trim() || null,
   );
-  res.status(201).json({ id, autor: autor.trim() || "Anónimo", texto: texto.trim() });
+  res.status(201).json({
+    id,
+    autor: autor.trim() || "Anónimo",
+    texto: texto.trim(),
+    photonCapsule: photonCapsule?.trim() || null,
+    photonBytes: Number.isFinite(photonBytes) ? photonBytes : null,
+    photonMode: photonMode?.trim() || null,
+    photonEncoding: photonEncoding?.trim() || null,
+  });
 });
 
 // ── DELETE /comments/:id ──────────────────────────────────────────────────────
