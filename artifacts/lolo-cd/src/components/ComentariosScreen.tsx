@@ -2,9 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface Comentario { id: string; autor: string; texto: string; ghost: boolean; }
+interface Comentario { id: string; autor: string; texto: string; hasAudio: number; }
 interface PageResp   { items: Comentario[]; nextCursor: number | null; }
-interface GhostStatus { total_seeds: number; ghosts_alive: number; ghosts_ram_kb: number; }
 
 interface Props { voiceId?: string; }
 
@@ -14,17 +13,15 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
   const [cargando, setCargando]           = useState(false);
   const [reproduciendo, setReproduciendo] = useState(false);
   const [indiceActual, setIndiceActual]   = useState<number | null>(null);
-  const [materializandoIdx, setMaterializandoIdx] = useState<number | null>(null);
+  const [grabandoIdx, setGrabandoIdx]     = useState<number | null>(null);
   const [error, setError]                 = useState<string | null>(null);
   const [nuevoAutor, setNuevoAutor]       = useState("");
   const [nuevoTexto, setNuevoTexto]       = useState("");
   const [enviando, setEnviando]           = useState(false);
-  const [ghostStatus, setGhostStatus]     = useState<GhostStatus | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef(false);
 
-  // ── Cargar frases semilla ─────────────────────────────────────────────────
   const cargarPagina = useCallback(async (cursor: number | null = null) => {
     if (cargando) return;
     setCargando(true);
@@ -39,74 +36,51 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     finally { setCargando(false); }
   }, [cargando]);
 
-  const cargarGhostStatus = useCallback(async () => {
-    try {
-      const s: GhostStatus = await fetch(`${BASE}/api/comments/ghosts/status`).then(r => r.json());
-      setGhostStatus(s);
-    } catch { /* ignorar */ }
-  }, []);
+  useEffect(() => { cargarPagina(null); }, []);
 
-  useEffect(() => {
-    cargarPagina(null);
-    cargarGhostStatus();
-  }, []);
-
-  // ── GhostSeed: materializar y reproducir ──────────────────────────────────
-  const reproducirGhost = useCallback(async (c: Comentario): Promise<void> => {
+  // ── Materializar y reproducir ─────────────────────────────────────────────
+  // Si el audio ya está grabado en la semilla → materializa al instante.
+  // Si es la primera vez → genera UNA SOLA VEZ, graba en la semilla para siempre.
+  const materializar = useCallback(async (c: Comentario): Promise<void> => {
     const res = await fetch(
       `${BASE}/api/comments/${c.id}/audio?voiceId=${encodeURIComponent(voiceId)}`
     );
     if (!res.ok) throw new Error(`Error ${res.status}`);
 
-    const ghostHit = res.headers.get("x-ghost") === "HIT";
-
-    // Si materializó (era fantasma muerto), actualizar estado local
-    if (!ghostHit) {
-      setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, ghost: true } : x));
-      cargarGhostStatus();
+    const seedHit = res.headers.get("x-seed") === "HIT";
+    if (!seedHit) {
+      setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, hasAudio: 1 } : x));
     }
 
-    const ct  = res.headers.get("content-type") ?? "audio/wav";
+    const ct  = res.headers.get("content-type") ?? "audio/ogg";
     const url = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: ct }));
     const audio = new Audio(url);
     audioRef.current = audio;
     await new Promise<void>((resolve, reject) => {
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        // Evaporar el fantasma al instante cuando termina el audio
-        fetch(`${BASE}/api/comments/${c.id}/ghost`, { method: "DELETE" })
-          .then(() => {
-            setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, ghost: false } : x));
-            cargarGhostStatus();
-          })
-          .catch(() => {});
-        resolve();
-      };
-      audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error reproduciendo")); };
+      audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error")); };
       audio.play().catch(reject);
     });
-  }, [voiceId, cargarGhostStatus]);
+  }, [voiceId]);
 
-  // ── Reproducir una sola frase ─────────────────────────────────────────────
   const reproducirUno = useCallback(async (c: Comentario, idx: number) => {
     if (reproduciendo) return;
     abortRef.current = false;
     setReproduciendo(true);
     setIndiceActual(idx);
-    setMaterializandoIdx(c.ghost ? null : idx);
+    setGrabandoIdx(c.hasAudio ? null : idx);
     setError(null);
     try {
-      await reproducirGhost(c);
+      await materializar(c);
     } catch (e) {
       if (!abortRef.current) setError((e as Error).message);
     } finally {
       setReproduciendo(false);
       setIndiceActual(null);
-      setMaterializandoIdx(null);
+      setGrabandoIdx(null);
     }
-  }, [reproducirGhost, reproduciendo]);
+  }, [materializar, reproduciendo]);
 
-  // ── Leer todas en secuencia ───────────────────────────────────────────────
   const leerTodos = useCallback(async () => {
     if (reproduciendo || comentarios.length === 0) return;
     abortRef.current = false;
@@ -115,38 +89,24 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     for (let i = 0; i < comentarios.length; i++) {
       if (abortRef.current) break;
       setIndiceActual(i);
-      setMaterializandoIdx(comentarios[i].ghost ? null : i);
-      try {
-        await reproducirGhost(comentarios[i]);
-      } catch (e) {
-        if (!abortRef.current) { setError((e as Error).message); break; }
-      }
-      setMaterializandoIdx(null);
+      setGrabandoIdx(comentarios[i].hasAudio ? null : i);
+      try { await materializar(comentarios[i]); }
+      catch (e) { if (!abortRef.current) { setError((e as Error).message); break; } }
+      setGrabandoIdx(null);
     }
     setReproduciendo(false);
     setIndiceActual(null);
-    setMaterializandoIdx(null);
-  }, [comentarios, reproducirGhost, reproduciendo]);
+    setGrabandoIdx(null);
+  }, [comentarios, materializar, reproduciendo]);
 
   const detener = useCallback(() => {
     abortRef.current = true;
     audioRef.current?.pause();
-    // Evaporar el fantasma del comentario que se estaba reproduciendo
-    if (indiceActual !== null && comentarios[indiceActual]) {
-      const id = comentarios[indiceActual].id;
-      fetch(`${BASE}/api/comments/${id}/ghost`, { method: "DELETE" })
-        .then(() => {
-          setComentarios(prev => prev.map(x => x.id === id ? { ...x, ghost: false } : x));
-          cargarGhostStatus();
-        })
-        .catch(() => {});
-    }
     setReproduciendo(false);
     setIndiceActual(null);
-    setMaterializandoIdx(null);
-  }, [indiceActual, comentarios, cargarGhostStatus]);
+    setGrabandoIdx(null);
+  }, []);
 
-  // ── Guardar nueva frase semilla ───────────────────────────────────────────
   const agregarComentario = async () => {
     const texto = nuevoTexto.trim();
     if (!texto || enviando) return;
@@ -161,8 +121,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       setComentarios(prev => [nuevo, ...prev]);
       setNuevoAutor("");
       setNuevoTexto("");
-      cargarGhostStatus();
-    } catch { setError("Error al guardar frase"); }
+    } catch { setError("Error al guardar"); }
     finally { setEnviando(false); }
   };
 
@@ -170,20 +129,26 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     if (reproduciendo) detener();
     setComentarios(prev => prev.filter(c => c.id !== id));
     await fetch(`${BASE}/api/comments/${id}`, { method: "DELETE" }).catch(() => {});
-    cargarGhostStatus();
   };
+
+  const conAudio = comentarios.filter(c => c.hasAudio).length;
 
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div>
           <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
-            GHOSTSEED {comentarios.length > 0 && `· ${comentarios.length} frases`}
+            FRASES SEMILLA {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
+          {conAudio > 0 && (
+            <span style={{ marginLeft: 10, fontSize: 11, color: "#86efac", fontWeight: 700 }}>
+              ⚡ {conAudio} materializable al instante
+            </span>
+          )}
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            texto eterno en disco · audio fantasma en RAM · se evapora solo · cero disco de audio
+            texto eterno · audio grabado una sola vez · materializa instantáneo · Opus ~15 KB/frase
           </div>
         </div>
         <div>
@@ -193,24 +158,6 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
           }
         </div>
       </div>
-
-      {/* Ghost status bar */}
-      {ghostStatus && (
-        <div style={{ background: "#111113", borderRadius: 8, padding: "8px 12px", border: "1px solid #27272a", marginBottom: 14, display: "flex", gap: 16, fontSize: 11 }}>
-          <span style={{ color: "#52525b" }}>
-            🌫 <span style={{ color: "#c4b5fd", fontWeight: 700 }}>{ghostStatus.ghosts_alive}</span> fantasmas vivos
-          </span>
-          <span style={{ color: "#52525b" }}>
-            RAM: <span style={{ color: "#c4b5fd", fontWeight: 700 }}>{ghostStatus.ghosts_ram_kb} KB</span>
-          </span>
-          <span style={{ color: "#52525b" }}>
-            Disco audio: <span style={{ color: "#86efac", fontWeight: 700 }}>0 bytes</span>
-          </span>
-          <span style={{ color: "#52525b" }}>
-            Semillas: <span style={{ color: "#e4e4e7", fontWeight: 700 }}>{ghostStatus.total_seeds}</span>
-          </span>
-        </div>
-      )}
 
       {/* Formulario */}
       <div style={{ background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a", marginBottom: 16 }}>
@@ -228,7 +175,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         />
         <button
           onClick={agregarComentario} disabled={!nuevoTexto.trim() || enviando}
-          style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: nuevoTexto.trim() && !enviando ? "pointer" : "not-allowed", background: nuevoTexto.trim() && !enviando ? "rgba(168,85,247,0.15)" : "#18181b", color: nuevoTexto.trim() && !enviando ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600, transition: "all 0.15s" }}>
+          style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: nuevoTexto.trim() && !enviando ? "pointer" : "not-allowed", background: nuevoTexto.trim() && !enviando ? "rgba(168,85,247,0.15)" : "#18181b", color: nuevoTexto.trim() && !enviando ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600 }}>
           {enviando ? "Guardando..." : "✦ Guardar frase semilla"}
         </button>
       </div>
@@ -244,31 +191,31 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         {comentarios.length === 0 && !cargando
           ? <div style={{ color: "#3f3f46", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Sin frases — guardá una arriba</div>
           : comentarios.map((c, i) => {
-            const isPlaying      = indiceActual === i;
-            const isMaterializing = materializandoIdx === i;
+            const isPlaying  = indiceActual === i;
+            const isGrabando = grabandoIdx === i;
             return (
               <div key={c.id} style={{ background: isPlaying ? "rgba(168,85,247,0.08)" : "#111113", border: `1px solid ${isPlaying ? "rgba(168,85,247,0.4)" : "#27272a"}`, borderRadius: 10, padding: "10px 14px", transition: "all 0.2s", display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    {isPlaying && !isMaterializing && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
+                    {isPlaying && !isGrabando && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
                     <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
-                    {isMaterializing
-                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⚡ materializando fantasma...</span>
-                      : c.ghost
-                        ? <span style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700 }}>🌫 fantasma vivo</span>
-                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ solo texto</span>
+                    {isGrabando
+                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ grabando en semilla...</span>
+                      : c.hasAudio
+                        ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 700 }}>⚡ materializa al instante</span>
+                        : <span style={{ fontSize: 10, color: "#52525b" }}>◯ solo texto · primer play graba el audio</span>
                     }
                   </div>
                   <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
                   {!reproduciendo && (
-                    <button onClick={() => reproducirUno(c, i)} title="Reproducir"
-                      style={{ background: c.ghost ? "rgba(196,181,253,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.ghost ? "rgba(196,181,253,0.3)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.ghost ? "#c4b5fd" : "#d8b4fe", fontSize: 11, padding: "3px 8px", borderRadius: 6 }}>
-                      {c.ghost ? "🌫" : "▶"}
+                    <button onClick={() => reproducirUno(c, i)}
+                      style={{ background: c.hasAudio ? "rgba(34,197,94,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.hasAudio ? "rgba(34,197,94,0.3)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.hasAudio ? "#86efac" : "#d8b4fe", fontSize: 12, padding: "4px 9px", borderRadius: 6, fontWeight: 700 }}>
+                      {c.hasAudio ? "⚡" : "▶"}
                     </button>
                   )}
-                  <button onClick={() => eliminar(c.id)} title="Eliminar"
+                  <button onClick={() => eliminar(c.id)}
                     style={{ background: "none", border: "none", cursor: "pointer", color: "#3f3f46", fontSize: 16, padding: "2px 4px", lineHeight: 1 }}
                     onMouseEnter={e => (e.currentTarget.style.color = "#fca5a5")}
                     onMouseLeave={e => (e.currentTarget.style.color = "#3f3f46")}>×</button>
