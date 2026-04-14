@@ -10,39 +10,9 @@ const TTS_API        = "http://127.0.0.1:8080/api/tts/generate";
 const TTS_SERVICE    = "http://127.0.0.1:5000";
 
 type AudioMap = Record<string, { ct: string; b64: string }>;
-type PhotonMemoryAudio = { ct: string; buf: Buffer; bytes: number; touched: number };
 
-const PHOTON_MEMORY_LIMIT_BYTES = 50 * 1024 * 1024;
-const photonMemoryCache = new Map<string, PhotonMemoryAudio>();
-let photonMemoryBytes = 0;
-
-function getPhotonMemoryCache(key: string): PhotonMemoryAudio | undefined {
-  const hit = photonMemoryCache.get(key);
-  if (hit) hit.touched = Date.now();
-  return hit;
-}
-
-function setPhotonMemoryCache(key: string, ct: string, buf: Buffer) {
-  const prev = photonMemoryCache.get(key);
-  if (prev) photonMemoryBytes -= prev.bytes;
-
-  photonMemoryCache.set(key, { ct, buf, bytes: buf.byteLength, touched: Date.now() });
-  photonMemoryBytes += buf.byteLength;
-
-  while (photonMemoryBytes > PHOTON_MEMORY_LIMIT_BYTES && photonMemoryCache.size > 0) {
-    let oldestKey: string | null = null;
-    let oldestTouched = Number.POSITIVE_INFINITY;
-    for (const [candidateKey, value] of photonMemoryCache.entries()) {
-      if (value.touched < oldestTouched) {
-        oldestTouched = value.touched;
-        oldestKey = candidateKey;
-      }
-    }
-    if (!oldestKey) break;
-    const oldest = photonMemoryCache.get(oldestKey);
-    if (oldest) photonMemoryBytes -= oldest.bytes;
-    photonMemoryCache.delete(oldestKey);
-  }
+function photonCacheKey(voiceId: string, photonCapsule: string | null, texto: string) {
+  return photonCapsule ? `photon:${voiceId}:${photonCapsule}:${texto}` : voiceId;
 }
 
 // ── Frases Semilla ────────────────────────────────────────────────────────────
@@ -125,31 +95,17 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
   const isPhoton = !!record.photon_capsule;
-  const cacheKey = isPhoton
-    ? `photon:${voiceId}:${record.photon_capsule}:${record.texto}`
-    : voiceId;
-
-  if (isPhoton) {
-    const photonHit = getPhotonMemoryCache(cacheKey);
-    if (photonHit) {
-      res.setHeader("Content-Type", photonHit.ct);
-      res.setHeader("X-Seed", "PHOTON-MEMORY");
-      res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
-      res.send(photonHit.buf);
-      return;
-    }
-  }
+  const cacheKey = photonCacheKey(voiceId, record.photon_capsule, record.texto);
 
   let audioMap: AudioMap = {};
-  if (!isPhoton) {
-    try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
-  }
+  try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
 
   // ── Replay: audio ya generado, servir directo desde la BD (~5ms) ─────────
-  if (!isPhoton && audioMap[cacheKey]?.b64) {
+  if (audioMap[cacheKey]?.b64) {
     const { ct, b64 } = audioMap[cacheKey];
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", "CACHED");
+    res.setHeader("X-Seed", isPhoton ? "PHOTON-CACHED" : "CACHED");
+    if (isPhoton) res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
     res.send(Buffer.from(b64, "base64"));
     return;
   }
@@ -165,16 +121,12 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
     const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    if (isPhoton) {
-      setPhotonMemoryCache(cacheKey, ct, buf);
-    } else {
-      audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
-      db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
-        .run(JSON.stringify(audioMap), id);
-    }
+    audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
+    db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
+      .run(JSON.stringify(audioMap), id);
 
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", isPhoton ? "PHOTON-REGENERATED" : "MATERIALIZED");
+    res.setHeader("X-Seed", isPhoton ? "PHOTON-MATERIALIZED" : "MATERIALIZED");
     if (isPhoton) res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
     res.send(buf);
   } catch (e) {
@@ -184,21 +136,31 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
 // ── POST /comments ────────────────────────────────────────────────────────────
 commentsRouter.post("/comments", (req, res) => {
-  const { autor = "Anónimo", texto, photonCapsule, photonBytes, photonMode, photonEncoding } = req.body as {
+  const { autor = "Anónimo", texto, photonCapsule, photonBytes, photonMode, photonEncoding, voiceId = "darwin", audioData } = req.body as {
     autor?: string;
     texto?: string;
     photonCapsule?: string;
     photonBytes?: number;
     photonMode?: string;
     photonEncoding?: string;
+    voiceId?: string;
+    audioData?: { ct?: string; b64?: string };
   };
   if (!texto?.trim()) { res.status(400).json({ error: "texto requerido" }); return; }
   if (!photonCapsule?.trim()) { res.status(400).json({ error: "cápsula Photon requerida" }); return; }
   const id = Date.now().toString();
-  db.prepare("INSERT INTO comentarios (id, autor, texto, photon_capsule, photon_bytes, photon_mode, photon_encoding) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+  let initialAudioData: string | null = null;
+  if (audioData?.b64?.trim()) {
+    const safeVoiceId = typeof voiceId === "string" && voiceId.trim() ? voiceId.trim() : "darwin";
+    const safeCt = audioData.ct?.trim() || "audio/wav";
+    const cacheKey = photonCacheKey(safeVoiceId, photonCapsule.trim(), texto.trim());
+    initialAudioData = JSON.stringify({ [cacheKey]: { ct: safeCt, b64: audioData.b64.trim() } });
+  }
+  db.prepare("INSERT INTO comentarios (id, autor, texto, audio_data, photon_capsule, photon_bytes, photon_mode, photon_encoding) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     id,
     (autor.trim() || "Anónimo"),
     texto.trim(),
+    initialAudioData,
     photonCapsule?.trim() || null,
     Number.isFinite(photonBytes) ? photonBytes : null,
     photonMode?.trim() || null,

@@ -5,6 +5,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface Voice { id: string; name: string; cloned: boolean; piper: boolean; }
 interface VoicesResp { voices: Voice[]; daemonReady: boolean; }
+interface PhotonPublishInfo { encodedText: string; estimatedBytes: number; encoding: string; mode: string; }
 
 export default function App() {
   const [texto, setTexto]                   = useState("");
@@ -22,6 +23,12 @@ export default function App() {
   const [magicText, setMagicText]           = useState("");
   const [magicMode, setMagicMode]           = useState("photon");
   const [magicMeta, setMagicMeta]           = useState<{ frameCount: number; durationSeconds: number; encoding: string; estimatedBytes?: number; millionThirtySecondEstimateGb?: number; reconstructable?: boolean; regenerative?: boolean; note?: string } | null>(null);
+  const [generatedAudioBlob, setGeneratedAudioBlob] = useState<Blob | null>(null);
+  const [generatedAudioType, setGeneratedAudioType] = useState("audio/wav");
+  const [generatedPhoton, setGeneratedPhoton] = useState<PhotonPublishInfo | null>(null);
+  const [publishLoading, setPublishLoading] = useState(false);
+  const [publishMessage, setPublishMessage] = useState<string | null>(null);
+  const [commentsRefreshKey, setCommentsRefreshKey] = useState(0);
   const fileInputRef    = useRef<HTMLInputElement>(null);
   const audioRef        = useRef<HTMLAudioElement>(null);
   const upgradeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -97,6 +104,9 @@ export default function App() {
     setCacheHit(null);
     setDarwinUpgrading(false);
     setDarwinUpgraded(false);
+    setGeneratedAudioBlob(null);
+    setGeneratedPhoton(null);
+    setPublishMessage(null);
     textoRef.current = texto.trim();
 
     try {
@@ -111,9 +121,25 @@ export default function App() {
       }
       const isUpgrading = res.headers.get("x-darwin-upgrading") === "true";
       const blob = await res.blob();
+      const audioType = blob.type || res.headers.get("content-type") || "audio/wav";
       const url  = URL.createObjectURL(blob);
       setAudioUrl(url);
+      setGeneratedAudioBlob(blob);
+      setGeneratedAudioType(audioType);
       setTimeout(() => audioRef.current?.play(), 50);
+
+      fetch(`${BASE}/api/voice/magic-text?mode=photon`, {
+        method: "POST",
+        headers: { "Content-Type": audioType },
+        body: blob,
+      })
+        .then(async r => {
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error((data as { error?: string }).error ?? "Error Photon");
+          return data as PhotonPublishInfo;
+        })
+        .then(setGeneratedPhoton)
+        .catch((e) => setPublishMessage((e as Error).message));
 
       if (isUpgrading) {
         const xttsBlob = fetch(`${BASE}/api/tts/generate`, {
@@ -127,6 +153,49 @@ export default function App() {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  function blobToBase64(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const value = String(reader.result ?? "");
+        resolve(value.includes(",") ? value.split(",")[1] : value);
+      };
+      reader.onerror = () => reject(new Error("No pude preparar el audio para guardar"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function publicarComentarioPhoton() {
+    if (!texto.trim() || !generatedAudioBlob || !generatedPhoton || publishLoading) return;
+    setPublishLoading(true);
+    setPublishMessage(null);
+    try {
+      const b64 = await blobToBase64(generatedAudioBlob);
+      const res = await fetch(`${BASE}/api/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          autor: "Motor Lolo CD",
+          texto: texto.trim(),
+          photonCapsule: generatedPhoton.encodedText,
+          photonBytes: generatedPhoton.estimatedBytes,
+          photonMode: generatedPhoton.mode,
+          photonEncoding: generatedPhoton.encoding,
+          voiceId,
+          audioData: { ct: generatedAudioType, b64 },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Error publicando comentario");
+      setPublishMessage("Comentario Photon publicado con audio permanente.");
+      setCommentsRefreshKey((n) => n + 1);
+    } catch (e) {
+      setPublishMessage((e as Error).message);
+    } finally {
+      setPublishLoading(false);
     }
   }
 
@@ -294,6 +363,23 @@ export default function App() {
               <a href={audioUrl} download="darwin.wav" style={{ display: "block", marginTop: 8, textAlign: "center", color: "#52525b", fontSize: 12, textDecoration: "none" }}>
                 Descargar audio
               </a>
+              <button
+                onClick={publicarComentarioPhoton}
+                disabled={!generatedAudioBlob || !generatedPhoton || publishLoading}
+                style={{ marginTop: 10, width: "100%", padding: "11px", borderRadius: 10, border: "none", cursor: generatedAudioBlob && generatedPhoton && !publishLoading ? "pointer" : "not-allowed", background: generatedAudioBlob && generatedPhoton && !publishLoading ? "rgba(34,197,94,0.16)" : "#18181b", color: generatedAudioBlob && generatedPhoton && !publishLoading ? "#86efac" : "#52525b", fontSize: 13, fontWeight: 800 }}
+              >
+                {publishLoading ? "Publicando..." : generatedPhoton ? "✦ Publicar comentario Photon" : "Preparando Photon..."}
+              </button>
+              {generatedPhoton && (
+                <div style={{ color: "#86efac", fontSize: 11, marginTop: 8, textAlign: "center" }}>
+                  Photon listo · {generatedPhoton.estimatedBytes} bytes · audio se guardará permanente
+                </div>
+              )}
+              {publishMessage && (
+                <div style={{ color: publishMessage.includes("publicado") ? "#86efac" : "#fca5a5", fontSize: 12, marginTop: 8, textAlign: "center" }}>
+                  {publishMessage}
+                </div>
+              )}
             </div>
           )}
 
@@ -376,7 +462,7 @@ export default function App() {
         </div>
 
         <div style={{ marginTop: 24 }}>
-          <ComentariosScreen voiceId={voiceId} />
+          <ComentariosScreen voiceId={voiceId} refreshKey={commentsRefreshKey} />
         </div>
       </div>
 

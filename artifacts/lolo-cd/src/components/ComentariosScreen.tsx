@@ -12,10 +12,10 @@ interface Comentario {
   photonEncoding?: string | null;
 }
 interface PageResp   { items: Comentario[]; nextCursor: number | null; }
-interface Props      { voiceId?: string; }
+interface Props      { voiceId?: string; refreshKey?: number; }
 interface PhotonInfo { encodedText: string; estimatedBytes: number; encoding: string; mode: string; millionThirtySecondEstimateGb: number; durationSeconds: number; }
 
-export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
+export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }: Props) {
   const [comentarios, setComentarios]   = useState<Comentario[]>([]);
   const [nextCursor, setNextCursor]     = useState<number | null>(null);
   const [cargando, setCargando]         = useState(false);
@@ -50,7 +50,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     finally { setCargando(false); }
   }, [cargando]);
 
-  useEffect(() => { cargarPagina(null); }, []);
+  useEffect(() => { cargarPagina(null); }, [refreshKey]);
 
   const materializar = useCallback(async (c: Comentario): Promise<void> => {
     const res = await fetch(
@@ -212,7 +212,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
             COMENTARIOS PHOTON {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            solo Photon · guarda cápsula diminuta · regenera audio · cache temporal sin peso permanente
+            solo Photon · guarda cápsula diminuta · primer play/generar guarda audio permanente
           </div>
         </div>
         <div>
@@ -234,7 +234,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }} />
         <textarea value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agregarComentario(); } }}
-          placeholder="Escribí qué debe decir el comentario Photon... (grabá una cápsula para poder guardar)" rows={2}
+          placeholder="Escribí qué debe decir el comentario Photon... (grabá una cápsula o publicá desde el audio generado)" rows={2}
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" }} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
           {!grabando
@@ -261,7 +261,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         )}
         <button onClick={agregarComentario} disabled={!puedeGuardar}
           style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: puedeGuardar ? "pointer" : "not-allowed", background: puedeGuardar ? "rgba(168,85,247,0.15)" : "#18181b", color: puedeGuardar ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600 }}>
-          {enviando ? "Guardando..." : photonInfo ? "✦ Guardar comentario Photon" : "Grabá una cápsula Photon primero"}
+          {enviando ? "Guardando..." : photonInfo ? "✦ Publicar comentario Photon" : "Grabá una cápsula Photon primero"}
         </button>
       </div>
 
@@ -290,7 +290,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
                         <span style={{ fontSize: 10, color: "#86efac", fontWeight: 800, background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 5, padding: "1px 6px" }}>PHOTON · {c.photonBytes ?? 27} bytes</span>
                       )}
                       {isMaterializando && (
-                        <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>◈ regenerando Photon...</span>
+                        <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>◈ generando/cacheando Photon...</span>
                       )}
                     </div>
                     <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>
