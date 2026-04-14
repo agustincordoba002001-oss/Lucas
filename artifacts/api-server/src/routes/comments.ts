@@ -1,7 +1,6 @@
 import { Router }      from "express";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readFileSync } from "fs";
-import { spawn }        from "child_process";
 
 const commentsRouter = Router();
 
@@ -9,60 +8,72 @@ const DB_PATH   = "/home/runner/workspace/comments.db";
 const JSON_PATH = "/home/runner/workspace/comments.json";
 const TTS_API   = "http://127.0.0.1:8080/api/tts/generate";
 
-const db = new DatabaseSync(DB_PATH);
+// ── GhostSeed: fantasmas de audio en memoria ──────────────────────────────────
+//
+//  El texto vive en la base de datos para siempre (~100 bytes/frase).
+//  El audio no se guarda en ningún lado — vive como un "fantasma" en RAM.
+//  Cuando le das play → materializa el fantasma (genera el audio).
+//  Si nadie lo usa en GHOST_TTL ms → se evapora solo.
+//  La semilla sigue existiendo (texto eterno). El fantasma vuelve al próximo play.
+//
+const GHOST_TTL    = 2 * 60 * 60 * 1000;   // 2 horas de vida
+const GHOST_MAX    = 200;                   // máximo de fantasmas simultáneos en RAM
 
-// La semilla tiene: texto + audio_b64 (Opus comprimido → Base64 → TEXT)
-// Opus voice: ~15 KB por frase vs ~160 KB de WAV → 10x más liviano
+interface Ghost {
+  buf:        Buffer;
+  contentType: string;
+  lastAccess: number;
+}
+
+const ghosts = new Map<string, Ghost>();
+
+function touchGhost(id: string, buf: Buffer, ct: string) {
+  ghosts.set(id, { buf, contentType: ct, lastAccess: Date.now() });
+  // Si superamos el máximo, evaporar el más viejo
+  if (ghosts.size > GHOST_MAX) {
+    let oldestKey = "";
+    let oldestTime = Infinity;
+    for (const [k, g] of ghosts) {
+      if (g.lastAccess < oldestTime) { oldestTime = g.lastAccess; oldestKey = k; }
+    }
+    if (oldestKey) ghosts.delete(oldestKey);
+  }
+}
+
+// Evaporar fantasmas viejos cada 30 minutos
+setInterval(() => {
+  const cutoff = Date.now() - GHOST_TTL;
+  let evaporados = 0;
+  for (const [k, g] of ghosts) {
+    if (g.lastAccess < cutoff) { ghosts.delete(k); evaporados++; }
+  }
+  if (evaporados > 0) console.log(`[GhostSeed] ${evaporados} fantasma(s) evaporados`);
+}, 30 * 60 * 1000);
+
+// ── SQLite — solo texto, cero audio en disco ──────────────────────────────────
+const db = new DatabaseSync(DB_PATH);
 db.exec(`
   CREATE TABLE IF NOT EXISTS comentarios (
-    id        TEXT PRIMARY KEY,
-    autor     TEXT NOT NULL,
-    texto     TEXT NOT NULL,
-    audio_b64 TEXT,
-    ts        INTEGER NOT NULL DEFAULT (unixepoch())
+    id    TEXT PRIMARY KEY,
+    autor TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    ts    INTEGER NOT NULL DEFAULT (unixepoch())
   );
   CREATE INDEX IF NOT EXISTS idx_ts ON comentarios(ts);
   PRAGMA journal_mode=WAL;
+  PRAGMA page_size=4096;
+  PRAGMA cache_size=-32000;
 `);
 
-try { db.exec("ALTER TABLE comentarios ADD COLUMN audio_b64 TEXT"); } catch { /* ya existe */ }
-
 // Migrar desde JSON si la tabla está vacía
-const row = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
-if (row.n === 0 && existsSync(JSON_PATH)) {
+const count = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
+if (count.n === 0 && existsSync(JSON_PATH)) {
   try {
     const items = JSON.parse(readFileSync(JSON_PATH, "utf8")) as { id: string; autor: string; texto: string }[];
     const ins   = db.prepare("INSERT OR IGNORE INTO comentarios (id, autor, texto) VALUES (?, ?, ?)");
     for (const c of items) ins.run(c.id, c.autor, c.texto);
-    console.log(`[DB] Migrados ${items.length} comentarios desde JSON → SQLite`);
-  } catch (e) { console.error("[DB] Error migrando JSON:", e); }
-}
-
-// ── Comprimir WAV → OGG Opus usando ffmpeg (en memoria, cero archivos) ────────
-// Opus es el códec más eficiente para voz: 24 kbps = calidad perfecta, 15 KB/frase
-function wavToOpus(wavBuf: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const ff = spawn("ffmpeg", [
-      "-f", "wav", "-i", "pipe:0",        // entrada: WAV desde stdin
-      "-c:a", "libopus",                   // códec Opus
-      "-b:a", "24k",                       // 24 kbps — voz perfecta
-      "-vbr", "on",                        // bitrate variable (más eficiente)
-      "-compression_level", "10",          // máxima compresión
-      "-application", "voip",              // optimizado para voz
-      "-f", "ogg",                         // contenedor OGG
-      "pipe:1",                            // salida: OGG a stdout
-    ], { stdio: ["pipe", "pipe", "pipe"] });
-
-    const chunks: Buffer[] = [];
-    ff.stdout.on("data", (d: Buffer) => chunks.push(d));
-    ff.stderr.on("data", () => {});        // ignorar logs de ffmpeg
-    ff.on("close", code => {
-      if (code === 0) resolve(Buffer.concat(chunks));
-      else reject(new Error(`ffmpeg salió con código ${code}`));
-    });
-    ff.stdin.write(wavBuf);
-    ff.stdin.end();
-  });
+    console.log(`[GhostSeed] Migrados ${items.length} comentarios → SQLite`);
+  } catch (e) { console.error("[GhostSeed] Error migrando JSON:", e); }
 }
 
 // ── GET /comments?cursor=<ts>&limit=<n> ──────────────────────────────────────
@@ -71,66 +82,73 @@ commentsRouter.get("/comments", (req, res) => {
   const cursor = req.query.cursor ? Number(req.query.cursor) : null;
 
   const rows = cursor
-    ? db.prepare("SELECT id, autor, texto, (audio_b64 IS NOT NULL) as hasAudio, ts FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
-    : db.prepare("SELECT id, autor, texto, (audio_b64 IS NOT NULL) as hasAudio, ts FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
+    ? db.prepare("SELECT id, autor, texto, ts FROM comentarios WHERE ts < ? ORDER BY ts DESC LIMIT ?").all(cursor, limit)
+    : db.prepare("SELECT id, autor, texto, ts FROM comentarios ORDER BY ts DESC LIMIT ?").all(limit);
 
   const nextCursor = rows.length === limit ? (rows[rows.length - 1] as { ts: number }).ts : null;
-  res.json({ items: rows, nextCursor });
+
+  // Adjuntar estado del fantasma a cada frase
+  const items = (rows as { id: string; autor: string; texto: string; ts: number }[]).map(r => ({
+    ...r,
+    ghost: ghosts.has(r.id),
+  }));
+
+  res.json({ items, nextCursor });
 });
 
-// ── GET /comments/:id/audio ───────────────────────────────────────────────────
-//
-//  SISTEMA SEEDAUDIO:
-//  El audio vive en la semilla como texto (Base64 de Opus comprimido).
-//  Primera vez → genera WAV → comprime a Opus (~15 KB) → Base64 → guarda como TEXT.
-//  Siguientes veces → decodifica Base64 → devuelve Opus → suena al instante.
-//  10x más liviano que WAV sin perder calidad de voz.
-//
+// ── GET /comments/:id/audio — GhostSeed ──────────────────────────────────────
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id      = req.params.id;
   const voiceId = (req.query.voiceId as string | undefined) ?? "darwin";
-  const record  = db.prepare("SELECT texto, audio_b64 FROM comentarios WHERE id = ?").get(id) as
-    { texto: string; audio_b64: string | null } | undefined;
+  const record  = db.prepare("SELECT texto FROM comentarios WHERE id = ?").get(id) as
+    { texto: string } | undefined;
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
-  // ── El audio ya vive en la semilla como texto → instante ─────────────────
-  if (record.audio_b64) {
-    const opusBuf = Buffer.from(record.audio_b64, "base64");
-    res.setHeader("Content-Type", "audio/ogg; codecs=opus");
-    res.setHeader("X-Seed", "HIT");
-    res.setHeader("X-Format", "opus");
-    res.send(opusBuf);
+  // ── Fantasma vivo → instante, sin generar nada ────────────────────────────
+  const ghost = ghosts.get(id);
+  if (ghost) {
+    ghost.lastAccess = Date.now();
+    res.setHeader("Content-Type", ghost.contentType);
+    res.setHeader("X-Ghost", "HIT");
+    res.send(ghost.buf);
     return;
   }
 
-  // ── Primera vez: genera WAV → comprime a Opus → guarda como texto ────────
+  // ── Fantasma muerto o nunca existió → materializar ────────────────────────
   try {
-    // 1. Generar WAV
     const ttsRes = await fetch(TTS_API, {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({ texto: record.texto, voiceId }),
     });
     if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status}`);
-    const wavBuf = Buffer.from(await ttsRes.arrayBuffer());
 
-    // 2. Comprimir WAV → Opus (en memoria, cero archivos, cero disco)
-    const opusBuf = await wavToOpus(wavBuf);
+    const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
+    const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    // 3. Convertir a texto Base64 y guardar en la semilla para siempre
-    const b64 = opusBuf.toString("base64");
-    db.prepare("UPDATE comentarios SET audio_b64 = ? WHERE id = ?").run(b64, id);
+    // Materializar el fantasma en RAM (no toca el disco)
+    touchGhost(id, buf, ct);
 
-    console.log(`[SeedAudio] ${id} — WAV ${(wavBuf.length/1024).toFixed(0)} KB → Opus ${(opusBuf.length/1024).toFixed(0)} KB (${Math.round(opusBuf.length/wavBuf.length*100)}% del original)`);
-
-    res.setHeader("Content-Type", "audio/ogg; codecs=opus");
-    res.setHeader("X-Seed", "MISS");
-    res.setHeader("X-Format", "opus");
-    res.send(opusBuf);
+    res.setHeader("Content-Type", ct);
+    res.setHeader("X-Ghost", "MATERIALIZED");
+    res.send(buf);
   } catch (e) {
     res.status(503).json({ error: (e as Error).message });
   }
+});
+
+// ── GET /comments/ghosts/status — estado de los fantasmas ────────────────────
+commentsRouter.get("/comments/ghosts/status", (_req, res) => {
+  const total   = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
+  const alive   = ghosts.size;
+  const ramBytes = [...ghosts.values()].reduce((s, g) => s + g.buf.length, 0);
+  res.json({
+    total_seeds:   total.n,
+    ghosts_alive:  alive,
+    ghosts_ram_kb: Math.round(ramBytes / 1024),
+    db_text_only:  true,
+  });
 });
 
 // ── POST /comments ────────────────────────────────────────────────────────────
@@ -141,11 +159,12 @@ commentsRouter.post("/comments", (req, res) => {
   db.prepare("INSERT INTO comentarios (id, autor, texto) VALUES (?, ?, ?)").run(
     id, (autor.trim() || "Anónimo"), texto.trim()
   );
-  res.status(201).json({ id, autor: autor.trim() || "Anónimo", texto: texto.trim(), hasAudio: 0 });
+  res.status(201).json({ id, autor: autor.trim() || "Anónimo", texto: texto.trim(), ghost: false });
 });
 
 // ── DELETE /comments/:id ──────────────────────────────────────────────────────
 commentsRouter.delete("/comments/:id", (req, res) => {
+  ghosts.delete(req.params.id);
   db.prepare("DELETE FROM comentarios WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });

@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface Comentario { id: string; autor: string; texto: string; hasAudio: number; }
+interface Comentario { id: string; autor: string; texto: string; ghost: boolean; }
 interface PageResp   { items: Comentario[]; nextCursor: number | null; }
+interface GhostStatus { total_seeds: number; ghosts_alive: number; ghosts_ram_kb: number; }
 
 interface Props { voiceId?: string; }
 
@@ -13,11 +14,12 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
   const [cargando, setCargando]           = useState(false);
   const [reproduciendo, setReproduciendo] = useState(false);
   const [indiceActual, setIndiceActual]   = useState<number | null>(null);
-  const [generandoIdx, setGenerandoIdx]   = useState<number | null>(null);
+  const [materializandoIdx, setMaterializandoIdx] = useState<number | null>(null);
   const [error, setError]                 = useState<string | null>(null);
   const [nuevoAutor, setNuevoAutor]       = useState("");
   const [nuevoTexto, setNuevoTexto]       = useState("");
   const [enviando, setEnviando]           = useState(false);
+  const [ghostStatus, setGhostStatus]     = useState<GhostStatus | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef(false);
@@ -37,26 +39,35 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     finally { setCargando(false); }
   }, [cargando]);
 
-  useEffect(() => { cargarPagina(null); }, []);
+  const cargarGhostStatus = useCallback(async () => {
+    try {
+      const s: GhostStatus = await fetch(`${BASE}/api/comments/ghosts/status`).then(r => r.json());
+      setGhostStatus(s);
+    } catch { /* ignorar */ }
+  }, []);
 
-  // ── Reproducir desde la semilla ───────────────────────────────────────────
-  // Primera vez: genera audio, lo guarda como texto en la semilla, lo reproduce.
-  // Siguientes veces: lee el texto de la semilla, decodifica, reproduce al instante.
-  const reproducirSemilla = useCallback(async (c: Comentario): Promise<boolean> => {
+  useEffect(() => {
+    cargarPagina(null);
+    cargarGhostStatus();
+  }, []);
+
+  // ── GhostSeed: materializar y reproducir ──────────────────────────────────
+  const reproducirGhost = useCallback(async (c: Comentario): Promise<void> => {
     const res = await fetch(
       `${BASE}/api/comments/${c.id}/audio?voiceId=${encodeURIComponent(voiceId)}`
     );
-    if (!res.ok) throw new Error(`Error al reproducir: ${res.status}`);
+    if (!res.ok) throw new Error(`Error ${res.status}`);
 
-    const seedHit = res.headers.get("x-seed") === "HIT";
+    const ghostHit = res.headers.get("x-ghost") === "HIT";
 
-    if (!seedHit) {
-      setComentarios(prev =>
-        prev.map(x => x.id === c.id ? { ...x, hasAudio: 1 } : x)
-      );
+    // Si materializó (era fantasma muerto), actualizar estado local
+    if (!ghostHit) {
+      setComentarios(prev => prev.map(x => x.id === c.id ? { ...x, ghost: true } : x));
+      cargarGhostStatus();
     }
 
-    const url   = URL.createObjectURL(await res.blob());
+    const ct  = res.headers.get("content-type") ?? "audio/wav";
+    const url = URL.createObjectURL(new Blob([await res.arrayBuffer()], { type: ct }));
     const audio = new Audio(url);
     audioRef.current = audio;
     await new Promise<void>((resolve, reject) => {
@@ -64,8 +75,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Error reproduciendo")); };
       audio.play().catch(reject);
     });
-    return seedHit;
-  }, [voiceId]);
+  }, [voiceId, cargarGhostStatus]);
 
   // ── Reproducir una sola frase ─────────────────────────────────────────────
   const reproducirUno = useCallback(async (c: Comentario, idx: number) => {
@@ -73,18 +83,18 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     abortRef.current = false;
     setReproduciendo(true);
     setIndiceActual(idx);
-    setGenerandoIdx(c.hasAudio ? null : idx);
+    setMaterializandoIdx(c.ghost ? null : idx);
     setError(null);
     try {
-      await reproducirSemilla(c);
+      await reproducirGhost(c);
     } catch (e) {
       if (!abortRef.current) setError((e as Error).message);
     } finally {
       setReproduciendo(false);
       setIndiceActual(null);
-      setGenerandoIdx(null);
+      setMaterializandoIdx(null);
     }
-  }, [reproducirSemilla, reproduciendo]);
+  }, [reproducirGhost, reproduciendo]);
 
   // ── Leer todas en secuencia ───────────────────────────────────────────────
   const leerTodos = useCallback(async () => {
@@ -95,25 +105,25 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     for (let i = 0; i < comentarios.length; i++) {
       if (abortRef.current) break;
       setIndiceActual(i);
-      setGenerandoIdx(comentarios[i].hasAudio ? null : i);
+      setMaterializandoIdx(comentarios[i].ghost ? null : i);
       try {
-        await reproducirSemilla(comentarios[i]);
+        await reproducirGhost(comentarios[i]);
       } catch (e) {
         if (!abortRef.current) { setError((e as Error).message); break; }
       }
-      setGenerandoIdx(null);
+      setMaterializandoIdx(null);
     }
     setReproduciendo(false);
     setIndiceActual(null);
-    setGenerandoIdx(null);
-  }, [comentarios, reproducirSemilla, reproduciendo]);
+    setMaterializandoIdx(null);
+  }, [comentarios, reproducirGhost, reproduciendo]);
 
   const detener = useCallback(() => {
     abortRef.current = true;
     audioRef.current?.pause();
     setReproduciendo(false);
     setIndiceActual(null);
-    setGenerandoIdx(null);
+    setMaterializandoIdx(null);
   }, []);
 
   // ── Guardar nueva frase semilla ───────────────────────────────────────────
@@ -131,35 +141,29 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
       setComentarios(prev => [nuevo, ...prev]);
       setNuevoAutor("");
       setNuevoTexto("");
+      cargarGhostStatus();
     } catch { setError("Error al guardar frase"); }
     finally { setEnviando(false); }
   };
 
-  // ── Eliminar frase ────────────────────────────────────────────────────────
   const eliminar = async (id: string) => {
     if (reproduciendo) detener();
     setComentarios(prev => prev.filter(c => c.id !== id));
     await fetch(`${BASE}/api/comments/${id}`, { method: "DELETE" }).catch(() => {});
+    cargarGhostStatus();
   };
-
-  const conAudio = comentarios.filter(c => c.hasAudio).length;
 
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
         <div>
           <span style={{ color: "#a855f7", fontWeight: 700, fontSize: 13, letterSpacing: "0.8px" }}>
-            FRASES SEMILLA {comentarios.length > 0 && `(${comentarios.length})`}
+            GHOSTSEED {comentarios.length > 0 && `· ${comentarios.length} frases`}
           </span>
-          {conAudio > 0 && (
-            <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 600, color: "#86efac" }}>
-              ⚡ {conAudio} con audio guardado como texto
-            </span>
-          )}
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            texto eterno · Opus ~15 KB/frase · guardado como texto · instantáneo al reproducir
+            texto eterno en disco · audio fantasma en RAM · se evapora solo · cero disco de audio
           </div>
         </div>
         <div>
@@ -169,6 +173,24 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
           }
         </div>
       </div>
+
+      {/* Ghost status bar */}
+      {ghostStatus && (
+        <div style={{ background: "#111113", borderRadius: 8, padding: "8px 12px", border: "1px solid #27272a", marginBottom: 14, display: "flex", gap: 16, fontSize: 11 }}>
+          <span style={{ color: "#52525b" }}>
+            🌫 <span style={{ color: "#c4b5fd", fontWeight: 700 }}>{ghostStatus.ghosts_alive}</span> fantasmas vivos
+          </span>
+          <span style={{ color: "#52525b" }}>
+            RAM: <span style={{ color: "#c4b5fd", fontWeight: 700 }}>{ghostStatus.ghosts_ram_kb} KB</span>
+          </span>
+          <span style={{ color: "#52525b" }}>
+            Disco audio: <span style={{ color: "#86efac", fontWeight: 700 }}>0 bytes</span>
+          </span>
+          <span style={{ color: "#52525b" }}>
+            Semillas: <span style={{ color: "#e4e4e7", fontWeight: 700 }}>{ghostStatus.total_seeds}</span>
+          </span>
+        </div>
+      )}
 
       {/* Formulario */}
       <div style={{ background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a", marginBottom: 16 }}>
@@ -202,18 +224,18 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         {comentarios.length === 0 && !cargando
           ? <div style={{ color: "#3f3f46", fontSize: 13, textAlign: "center", padding: "20px 0" }}>Sin frases — guardá una arriba</div>
           : comentarios.map((c, i) => {
-            const isPlaying    = indiceActual === i;
-            const isGenerating = generandoIdx === i;
+            const isPlaying      = indiceActual === i;
+            const isMaterializing = materializandoIdx === i;
             return (
               <div key={c.id} style={{ background: isPlaying ? "rgba(168,85,247,0.08)" : "#111113", border: `1px solid ${isPlaying ? "rgba(168,85,247,0.4)" : "#27272a"}`, borderRadius: 10, padding: "10px 14px", transition: "all 0.2s", display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                    {isPlaying && !isGenerating && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
+                    {isPlaying && !isMaterializing && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#a855f7", boxShadow: "0 0 6px #a855f7", flexShrink: 0 }} />}
                     <span style={{ color: "#71717a", fontSize: 11, fontWeight: 600 }}>{c.autor}</span>
-                    {isGenerating
-                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⏳ guardando en semilla...</span>
-                      : c.hasAudio
-                        ? <span style={{ fontSize: 10, color: "#86efac", fontWeight: 700 }}>⚡ audio en semilla</span>
+                    {isMaterializing
+                      ? <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>⚡ materializando fantasma...</span>
+                      : c.ghost
+                        ? <span style={{ fontSize: 10, color: "#c4b5fd", fontWeight: 700 }}>🌫 fantasma vivo</span>
                         : <span style={{ fontSize: 10, color: "#52525b" }}>◯ solo texto</span>
                     }
                   </div>
@@ -222,8 +244,8 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, flexShrink: 0 }}>
                   {!reproduciendo && (
                     <button onClick={() => reproducirUno(c, i)} title="Reproducir"
-                      style={{ background: c.hasAudio ? "rgba(34,197,94,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.hasAudio ? "rgba(34,197,94,0.3)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.hasAudio ? "#86efac" : "#d8b4fe", fontSize: 11, padding: "3px 8px", borderRadius: 6 }}>
-                      {c.hasAudio ? "⚡" : "▶"}
+                      style={{ background: c.ghost ? "rgba(196,181,253,0.15)" : "rgba(168,85,247,0.15)", border: `1px solid ${c.ghost ? "rgba(196,181,253,0.3)" : "rgba(168,85,247,0.3)"}`, cursor: "pointer", color: c.ghost ? "#c4b5fd" : "#d8b4fe", fontSize: 11, padding: "3px 8px", borderRadius: 6 }}>
+                      {c.ghost ? "🌫" : "▶"}
                     </button>
                   )}
                   <button onClick={() => eliminar(c.id)} title="Eliminar"
