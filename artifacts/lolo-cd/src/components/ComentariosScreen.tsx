@@ -212,7 +212,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
             COMENTARIOS PHOTON {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            solo Photon · guarda cápsula diminuta · primer play genera audio · después queda cacheado para siempre
+            solo Photon · guarda cápsula diminuta · regenera audio · cache temporal sin peso permanente
           </div>
         </div>
         <div>
@@ -290,7 +290,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
                         <span style={{ fontSize: 10, color: "#86efac", fontWeight: 800, background: "rgba(34,197,94,0.12)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 5, padding: "1px 6px" }}>PHOTON · {c.photonBytes ?? 27} bytes</span>
                       )}
                       {isMaterializando && (
-                        <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>◈ regenerando...</span>
+                        <span style={{ fontSize: 10, color: "#fde68a", fontWeight: 700 }}>◈ regenerando Photon...</span>
                       )}
                     </div>
                     <div style={{ color: "#e4e4e7", fontSize: 14, lineHeight: 1.5 }}>{c.texto}</div>

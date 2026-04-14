@@ -9,6 +9,42 @@ const JSON_PATH      = "/home/runner/workspace/comments.json";
 const TTS_API        = "http://127.0.0.1:8080/api/tts/generate";
 const TTS_SERVICE    = "http://127.0.0.1:5000";
 
+type AudioMap = Record<string, { ct: string; b64: string }>;
+type PhotonMemoryAudio = { ct: string; buf: Buffer; bytes: number; touched: number };
+
+const PHOTON_MEMORY_LIMIT_BYTES = 50 * 1024 * 1024;
+const photonMemoryCache = new Map<string, PhotonMemoryAudio>();
+let photonMemoryBytes = 0;
+
+function getPhotonMemoryCache(key: string): PhotonMemoryAudio | undefined {
+  const hit = photonMemoryCache.get(key);
+  if (hit) hit.touched = Date.now();
+  return hit;
+}
+
+function setPhotonMemoryCache(key: string, ct: string, buf: Buffer) {
+  const prev = photonMemoryCache.get(key);
+  if (prev) photonMemoryBytes -= prev.bytes;
+
+  photonMemoryCache.set(key, { ct, buf, bytes: buf.byteLength, touched: Date.now() });
+  photonMemoryBytes += buf.byteLength;
+
+  while (photonMemoryBytes > PHOTON_MEMORY_LIMIT_BYTES && photonMemoryCache.size > 0) {
+    let oldestKey: string | null = null;
+    let oldestTouched = Number.POSITIVE_INFINITY;
+    for (const [candidateKey, value] of photonMemoryCache.entries()) {
+      if (value.touched < oldestTouched) {
+        oldestTouched = value.touched;
+        oldestKey = candidateKey;
+      }
+    }
+    if (!oldestKey) break;
+    const oldest = photonMemoryCache.get(oldestKey);
+    if (oldest) photonMemoryBytes -= oldest.bytes;
+    photonMemoryCache.delete(oldestKey);
+  }
+}
+
 // ── Frases Semilla ────────────────────────────────────────────────────────────
 //
 //  El texto es la semilla · vive como texto en la BD · 0 bytes de audio en disco.
@@ -88,17 +124,32 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
-  type AudioMap = Record<string, { ct: string; b64: string }>;
-  let audioMap: AudioMap = {};
-  try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
+  const isPhoton = !!record.photon_capsule;
+  const cacheKey = isPhoton
+    ? `photon:${voiceId}:${record.photon_capsule}:${record.texto}`
+    : voiceId;
 
-  const cacheKey = record.photon_capsule ? `photon:${voiceId}` : voiceId;
+  if (isPhoton) {
+    const photonHit = getPhotonMemoryCache(cacheKey);
+    if (photonHit) {
+      res.setHeader("Content-Type", photonHit.ct);
+      res.setHeader("X-Seed", "PHOTON-MEMORY");
+      res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
+      res.send(photonHit.buf);
+      return;
+    }
+  }
+
+  let audioMap: AudioMap = {};
+  if (!isPhoton) {
+    try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
+  }
 
   // ── Replay: audio ya generado, servir directo desde la BD (~5ms) ─────────
-  if (audioMap[cacheKey]?.b64) {
+  if (!isPhoton && audioMap[cacheKey]?.b64) {
     const { ct, b64 } = audioMap[cacheKey];
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", record.photon_capsule ? "PHOTON-CACHED" : "CACHED");
+    res.setHeader("X-Seed", "CACHED");
     res.send(Buffer.from(b64, "base64"));
     return;
   }
@@ -114,12 +165,17 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
     const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
-    db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
-      .run(JSON.stringify(audioMap), id);
+    if (isPhoton) {
+      setPhotonMemoryCache(cacheKey, ct, buf);
+    } else {
+      audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
+      db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
+        .run(JSON.stringify(audioMap), id);
+    }
 
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", record.photon_capsule ? "PHOTON-MATERIALIZED" : "MATERIALIZED");
+    res.setHeader("X-Seed", isPhoton ? "PHOTON-REGENERATED" : "MATERIALIZED");
+    if (isPhoton) res.setHeader("X-Photon-Bytes", Buffer.byteLength(record.photon_capsule ?? "", "utf8").toString());
     res.send(buf);
   } catch (e) {
     res.status(503).json({ error: (e as Error).message });
