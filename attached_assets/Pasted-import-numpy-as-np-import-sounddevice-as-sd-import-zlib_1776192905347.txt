@@ -1,0 +1,55 @@
+import numpy as np
+import sounddevice as sd
+import zlib
+import base64
+
+class SistemaFantasma:
+    def __init__(self):
+        self.fs = 44100
+        self.secreto_maestro = 9.8123456789  # Tu constante única en el mundo
+
+    def audio_a_letra(self, duracion=3):
+        """1. Captura el audio y lo convierte en una letra única"""
+        print("🎙️ Grabando... la voz será destruida y convertida en código.")
+        audio = sd.rec(int(duracion * self.fs), samplerate=self.fs, channels=1)
+        sd.wait()
+        
+        # Extraemos la esencia (puntos clave de la onda)
+        esencia = audio[::100].flatten() # Reducimos para que quepa en un texto
+        
+        # Multiplicación fantasma: convertimos números en texto cifrado
+        # Esto genera la 'letra' única
+        bytes_audio = esencia.astype(np.float32).tobytes()
+        letra_unica = base64.b85encode(zlib.compress(bytes_audio)).decode('utf-8')
+        
+        print(f"✅ Audio destruido. Letra generada: {letra_unica[:20]}...")
+        return letra_unica
+
+    def letra_a_audio(self, letra):
+        """2. Toma la letra y la vuelve a inflar como audio"""
+        print("👻 Re-materializando audio desde la letra...")
+        
+        # El proceso inverso: Descomprimir la letra para obtener la semilla
+        bytes_recuperados = zlib.decompress(base64.b85decode(letra))
+        esencia_recuperada = np.frombuffer(bytes_recuperados, dtype=np.float32)
+        
+        # Re-construcción por interpolación (El audio aparece de la nada)
+        audio_final = np.interp(
+            np.linspace(0, len(esencia_recuperada), self.fs * 3),
+            np.arange(len(esencia_recuperada)),
+            esencia_recuperada
+        )
+        
+        sd.play(audio_final * self.secreto_maestro, self.fs)
+        sd.wait()
+        print("✨ El audio ha vuelto al vacío.")
+
+# --- PRUEBA REAL ---
+motor = SistemaFantasma()
+
+# PASO A: Convertimos tu voz en un TEXTO (Esto es lo que guardas en tu DB)
+mi_letra_en_el_servidor = motor.audio_a_letra()
+
+# PASO B: Recuperamos el audio usando SOLO ese texto
+# No hay archivos .mp3 involucrados, solo la letra
+motor.letra_a_audio(mi_letra_en_el_servidor)
