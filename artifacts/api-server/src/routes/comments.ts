@@ -1,12 +1,16 @@
 import { Router }      from "express";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
+import path from "path";
 
 const commentsRouter = Router();
 
-const DB_PATH   = "/home/runner/workspace/comments.db";
-const JSON_PATH = "/home/runner/workspace/comments.json";
-const TTS_API   = "http://127.0.0.1:8080/api/tts/generate";
+const DB_PATH        = "/home/runner/workspace/comments.db";
+const JSON_PATH      = "/home/runner/workspace/comments.json";
+const TTS_API        = "http://127.0.0.1:8080/api/tts/generate";
+const AUDIO_CACHE    = "/home/runner/workspace/tts_cache";
+
+mkdirSync(AUDIO_CACHE, { recursive: true });
 
 // ── Frases Semilla ────────────────────────────────────────────────────────────
 //
@@ -52,8 +56,8 @@ commentsRouter.get("/comments", (req, res) => {
 });
 
 // ── GET /comments/:id/audio ───────────────────────────────────────────────────
-// La semilla se materializa en audio. Solo existe mientras dura la respuesta.
-// Cuando termina de sonar, vuelve a ser texto. Nada queda guardado.
+// La semilla se materializa en audio la primera vez y queda guardada.
+// Las siguientes veces se sirve directamente desde el caché sin regenerar.
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id      = req.params.id;
   const voiceId = (req.query.voiceId as string | undefined) ?? "darwin";
@@ -62,6 +66,25 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
+  // Nombre de archivo de caché: {id}_{voiceId}.{ext}
+  // Buscamos primero .mp3 luego .wav para compatibilidad con ambos engines
+  const cacheBase = path.join(AUDIO_CACHE, `${id}_${voiceId}`);
+  const cacheMp3  = `${cacheBase}.mp3`;
+  const cacheWav  = `${cacheBase}.wav`;
+
+  if (existsSync(cacheMp3)) {
+    res.setHeader("Content-Type", "audio/mpeg");
+    res.setHeader("X-Seed", "CACHED");
+    res.sendFile(cacheMp3);
+    return;
+  }
+  if (existsSync(cacheWav)) {
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("X-Seed", "CACHED");
+    res.sendFile(cacheWav);
+    return;
+  }
+
   try {
     const ttsRes = await fetch(TTS_API, {
       method:  "POST",
@@ -69,8 +92,11 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
       body:    JSON.stringify({ texto: record.texto, voiceId }),
     });
     if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status}`);
-    const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
-    const buf = Buffer.from(await ttsRes.arrayBuffer());
+    const ct      = ttsRes.headers.get("content-type") ?? "audio/wav";
+    const buf     = Buffer.from(await ttsRes.arrayBuffer());
+    const isWav   = ct.includes("wav");
+    const savePath = isWav ? cacheWav : cacheMp3;
+    writeFileSync(savePath, buf);
     res.setHeader("Content-Type", ct);
     res.setHeader("X-Seed", "MATERIALIZED");
     res.send(buf);
