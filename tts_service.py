@@ -559,6 +559,234 @@ def piper_patch():
     return Response(patched, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  PROSODY FINGERPRINT — sistema único
+#
+#  El audio tiene dos capas separables:
+#    • Timbre  → quién habla (Darwin). Vive en el modelo. No ocupa espacio.
+#    • Prosodia → cómo suena ESTA frase (pitch + energía). Único por frase.
+#
+#  Al darle play por primera vez:
+#    texto → TTS completo (~650ms) → audio
+#                                     ↓
+#                          WORLD extrae F0 + energía
+#                                     ↓
+#                        comprimir (zlib) → ~300-600 bytes → BD
+#
+#  Siguientes reproducciones (~200ms):
+#    texto → Piper rápido → WORLD análisis → SP Darwin VQ
+#         + BD: F0 almacenada → interpolar → sintetizar WORLD
+#
+#  Storage: ~400-700 bytes/comentario como texto base64 en la BD.
+#  1.000.000 comentarios ≈ 400-700 MB — bajo 1 GB.
+# ══════════════════════════════════════════════════════════════════════════════
+
+import zlib, struct, base64
+
+_PF_STRIDE   = 4        # downmuestrea F0 de 200 Hz a 50 Hz (cada 4 frames)
+_PF_F0_MIN   = 50.0     # Hz mínimo para cuantización (log)
+_PF_F0_MAX   = 600.0    # Hz máximo para cuantización (log)
+_PF_VERSION  = 2        # versión del formato binario
+
+
+def _pf_extract(wav_bytes: bytes) -> bytes:
+    """
+    Extrae la huella prosódica (F0 + energía) de un WAV ya sintetizado.
+    Devuelve bytes comprimidos con zlib (~300-600 bytes para 20-30 seg de voz).
+    """
+    y, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+    if sr != WORLD_SR:
+        y = librosa.resample(y, orig_sr=sr, target_sr=WORLD_SR)
+    y = y.astype(np.float64)
+
+    # ── Análisis WORLD ────────────────────────────────────────────────────────
+    f0, t = pw.dio(y, WORLD_SR)
+    f0    = pw.stonemask(y, f0, t, WORLD_SR)
+
+    # ── Energía RMS frame a frame (ventana 5 ms = WORLD frame period) ─────────
+    hop   = max(1, int(WORLD_SR * 0.005))
+    n_frames = len(f0)
+    energy = np.array([
+        float(np.sqrt(np.mean(y[i*hop : i*hop+hop]**2) + 1e-12))
+        for i in range(n_frames)
+    ], dtype=np.float32)
+
+    # ── Downsampling a 50 Hz ──────────────────────────────────────────────────
+    s     = _PF_STRIDE
+    f0_ds = f0[::s].astype(np.float32)
+    en_ds = energy[::s]
+    N     = len(f0_ds)
+
+    # ── Voicing mask como bitfield ────────────────────────────────────────────
+    voiced = f0_ds > 0
+    n_mask = (N + 7) // 8
+    mask   = bytearray(n_mask)
+    for i, v in enumerate(voiced):
+        if v:
+            mask[i // 8] |= (1 << (i % 8))
+
+    # ── Cuantizar F0 a uint8 en escala log ────────────────────────────────────
+    lmin, lmax = np.log(_PF_F0_MIN), np.log(_PF_F0_MAX)
+    f0_q = np.zeros(N, dtype=np.uint8)
+    if voiced.any():
+        lf0        = np.log(np.clip(f0_ds[voiced], _PF_F0_MIN, _PF_F0_MAX))
+        f0_q[voiced] = np.round((lf0 - lmin) / (lmax - lmin) * 255).astype(np.uint8)
+
+    # ── Cuantizar energía a uint8 ─────────────────────────────────────────────
+    e_max = float(np.max(en_ds)) if en_ds.max() > 0 else 1.0
+    en_q  = np.round(np.clip(en_ds / e_max, 0, 1) * 255).astype(np.uint8)
+
+    # ── Empaquetar header + datos ─────────────────────────────────────────────
+    # header: version(B) + N(I) + WORLD_SR(I) + e_max(f) = 13 bytes
+    header  = struct.pack(">BIIf", _PF_VERSION, N, WORLD_SR, e_max)
+    payload = header + bytes(mask) + bytes(f0_q) + bytes(en_q)
+
+    return zlib.compress(payload, level=9)
+
+
+def _pf_synthesize(texto: str, fp_bytes: bytes) -> bytes:
+    """
+    Reconstruye audio usando la huella prosódica guardada.
+    Piper (~50ms) + WORLD análisis (~150ms) + síntesis (~50ms) ≈ 250ms total.
+    El timbre es Darwin (del motor). La prosodia es la huella guardada.
+    """
+    # ── Decodificar huella ────────────────────────────────────────────────────
+    payload  = zlib.decompress(fp_bytes)
+    hdr_size = struct.calcsize(">BIIf")
+    version, N, sr_stored, e_max = struct.unpack_from(">BIIf", payload, 0)
+    offset   = hdr_size
+
+    n_mask    = (N + 7) // 8
+    mask_data = payload[offset : offset + n_mask];  offset += n_mask
+    f0_q      = np.frombuffer(payload[offset : offset + N], dtype=np.uint8).copy(); offset += N
+    en_q      = np.frombuffer(payload[offset : offset + N], dtype=np.uint8).copy()
+
+    # Reconstruir voiced mask
+    voiced = np.array([(mask_data[i // 8] >> (i % 8)) & 1 for i in range(N)], dtype=bool)
+
+    # Reconstruir F0
+    lmin, lmax = np.log(_PF_F0_MIN), np.log(_PF_F0_MAX)
+    f0_stored  = np.zeros(N, dtype=np.float64)
+    if voiced.any():
+        f0_stored[voiced] = np.exp(f0_q[voiced].astype(np.float64) / 255.0 * (lmax - lmin) + lmin)
+
+    # Reconstruir energía
+    en_stored = en_q.astype(np.float64) / 255.0 * e_max
+
+    # ── 1. Generar audio base con Piper (rápido, ~50ms) ──────────────────────
+    model = _piper.get("davefx-es")
+    if model is None:
+        raise RuntimeError("Modelo Piper davefx-es no disponible para síntesis prosódica")
+    wav_base = _wav_from_piper(model, texto)
+
+    # ── 2. WORLD análisis del audio Piper ────────────────────────────────────
+    y_src, sr_src = sf.read(io.BytesIO(wav_base), dtype="float32", always_2d=False)
+    if y_src.ndim > 1:
+        y_src = y_src.mean(axis=1)
+    if sr_src != WORLD_SR:
+        y_src = librosa.resample(y_src, orig_sr=sr_src, target_sr=WORLD_SR)
+    y_src = y_src.astype(np.float64)
+
+    f0_src, t_src = pw.dio(y_src, WORLD_SR)
+    f0_src        = pw.stonemask(y_src, f0_src, t_src, WORLD_SR)
+    sp_src        = pw.cheaptrick(y_src, f0_src, t_src, WORLD_SR)
+    n_src         = len(f0_src)
+
+    # ── 3. Timbre Darwin VQ (frame a frame, igual que el motor) ──────────────
+    if _MOTOR_READY:
+        log_sp = np.log(sp_src + 1e-10).astype(np.float32)
+        dot    = log_sp @ _MOTOR_REFS_LOG_SP.T
+        dists  = (np.sum(log_sp**2, axis=1)[:, None]
+                  + _MOTOR_REFS_NORMS[None]
+                  - 2.0 * dot)
+        sp_conv = np.exp(_MOTOR_REFS_LOG_SP[np.argmin(dists, axis=1)]).astype(np.float64)
+    else:
+        sp_conv = sp_src
+
+    # ── 4. Interpolar F0 guardada (N puntos) → n_src frames ──────────────────
+    x_stored  = np.linspace(0, n_src - 1, N)
+    x_full    = np.arange(n_src)
+    f0_interp = np.interp(x_full, x_stored, f0_stored)
+
+    # Respetar silencios del Piper original: donde Piper no vocea → silencio
+    src_voiced = f0_src > 0
+    f0_final   = np.where(src_voiced, np.maximum(f0_interp, 1.0), 0.0)
+    f0_final   = np.clip(f0_final, 0.0, 520.0)
+
+    # ── 5. Aperiodicidad Darwin (media del corpus) ────────────────────────────
+    ap_darwin = np.tile(_MOTOR_MEAN_AP, (n_src, 1)) if _MOTOR_READY else \
+                np.full((n_src, sp_conv.shape[1]), 0.5)
+
+    # ── 6. Síntesis WORLD ────────────────────────────────────────────────────
+    y_out = pw.synthesize(f0_final, sp_conv, ap_darwin, WORLD_SR).astype(np.float32)
+
+    # ── 7. Aplicar envolvente de energía (suavizada) ──────────────────────────
+    en_interp = np.interp(x_full, x_stored, en_stored).astype(np.float32)
+    hop       = max(1, int(WORLD_SR * 0.005))
+    for i in range(min(n_src, len(en_interp))):
+        s_i = i * hop
+        e_i = min(s_i + hop, len(y_out))
+        if s_i >= len(y_out):
+            break
+        chunk = y_out[s_i:e_i]
+        cur   = float(np.sqrt(np.mean(chunk**2))) + 1e-9
+        tgt   = float(en_interp[i])
+        if cur > 0 and tgt > 0:
+            y_out[s_i:e_i] *= float(np.clip(tgt / cur, 0.0, 4.0))
+
+    # ── 8. Resample y normalizar ──────────────────────────────────────────────
+    if WORLD_SR != sr_src:
+        y_out = librosa.resample(y_out, orig_sr=WORLD_SR, target_sr=sr_src)
+    peak = float(np.max(np.abs(y_out))) if len(y_out) else 0.0
+    if peak > 0:
+        y_out = (y_out / peak) * 0.92
+
+    out = io.BytesIO()
+    sf.write(out, y_out, sr_src, format="WAV", subtype="PCM_16")
+    return out.getvalue()
+
+
+# ── Endpoints de la huella prosódica ─────────────────────────────────────────
+
+@app.post("/prosody/extract")
+def prosody_extract():
+    """Extrae la huella prosódica de un WAV ya generado. Devuelve ~300-600 bytes."""
+    d       = request.get_json(force=True)
+    wav_b64 = (d.get("wav_b64") or "").strip()
+    if not wav_b64:
+        return jsonify({"error": "wav_b64 requerido"}), 400
+    try:
+        wav_bytes = base64.b64decode(wav_b64)
+        fp        = _pf_extract(wav_bytes)
+        fp_b64    = base64.b64encode(fp).decode()
+        print(f"[PROSODY] Huella extraída — {len(fp)} bytes comprimidos → {len(fp_b64)} chars b64", flush=True)
+        return jsonify({"fingerprint_b64": fp_b64, "compressed_bytes": len(fp)})
+    except Exception as e:
+        print(f"[PROSODY] Error extrayendo: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/prosody/synthesize")
+def prosody_synthesize():
+    """Reconstruye audio desde texto + huella prosódica. ~200-250ms."""
+    d       = request.get_json(force=True)
+    texto   = (d.get("texto") or "").strip()
+    fp_b64  = (d.get("fingerprint_b64") or "").strip()
+    if not texto or not fp_b64:
+        return jsonify({"error": "texto y fingerprint_b64 requeridos"}), 400
+    try:
+        fp_bytes  = base64.b64decode(fp_b64)
+        wav_bytes = _pf_synthesize(texto, fp_bytes)
+        return Response(wav_bytes, mimetype="audio/wav",
+                        headers={"Cache-Control": "no-store",
+                                 "X-Prosody": "FINGERPRINT"})
+    except Exception as e:
+        print(f"[PROSODY] Error sintetizando: {e}", flush=True)
+        return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
-    print("[TTS-SERVICE] edge_tts + Piper + WORLD listos ✓", flush=True)
+    print("[TTS-SERVICE] edge_tts + Piper + WORLD + Prosody Fingerprint listos ✓", flush=True)
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
