@@ -14,3 +14,18 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * Accepts a short audio file as a binary request body and returns an LPC-based compact hexadecimal representation.
+ * @summary Encode voice audio as compact magic text
+ */
+export const VoiceToMagicTextResponse = zod.object({
+  encodedText: zod.string(),
+  sampleRate: zod.number(),
+  frameMs: zod.number(),
+  lpcOrder: zod.number(),
+  frameCount: zod.number(),
+  durationSeconds: zod.number(),
+  encoding: zod.string(),
+  maxDurationSeconds: zod.number(),
+});

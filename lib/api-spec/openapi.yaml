@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: voice
+    description: Voice encoding operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,46 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /voice/magic-text:
+    post:
+      operationId: voiceToMagicText
+      tags: [voice]
+      summary: Encode voice audio as compact magic text
+      description: Accepts a short audio file as a binary request body and returns an LPC-based compact hexadecimal representation.
+      requestBody:
+        required: true
+        content:
+          audio/wav:
+            schema:
+              type: string
+              format: binary
+          audio/mpeg:
+            schema:
+              type: string
+              format: binary
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "200":
+          description: Encoded voice representation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MagicTextResult"
+        "400":
+          description: Missing or invalid audio body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Audio could not be encoded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +75,39 @@ components:
           type: string
       required:
         - status
+    MagicTextResult:
+      type: object
+      properties:
+        encodedText:
+          type: string
+        sampleRate:
+          type: integer
+        frameMs:
+          type: integer
+        lpcOrder:
+          type: integer
+        frameCount:
+          type: integer
+        durationSeconds:
+          type: number
+        encoding:
+          type: string
+        maxDurationSeconds:
+          type: integer
+      required:
+        - encodedText
+        - sampleRate
+        - frameMs
+        - lpcOrder
+        - frameCount
+        - durationSeconds
+        - encoding
+        - maxDurationSeconds
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
 

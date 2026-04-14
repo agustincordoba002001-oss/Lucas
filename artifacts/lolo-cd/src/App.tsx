@@ -17,6 +17,11 @@ export default function App() {
   const [cacheHit, setCacheHit]             = useState<boolean | null>(null);
   const [darwinUpgrading, setDarwinUpgrading] = useState(false);
   const [darwinUpgraded, setDarwinUpgraded]   = useState(false);
+  const [magicLoading, setMagicLoading]     = useState(false);
+  const [magicError, setMagicError]         = useState<string | null>(null);
+  const [magicText, setMagicText]           = useState("");
+  const [magicMeta, setMagicMeta]           = useState<{ frameCount: number; durationSeconds: number; encoding: string } | null>(null);
+  const fileInputRef    = useRef<HTMLInputElement>(null);
   const audioRef        = useRef<HTMLAudioElement>(null);
   const upgradeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const textoRef        = useRef("");
@@ -121,6 +126,38 @@ export default function App() {
       setError((e as Error).message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function convertirVozAMagicText(file: File | null) {
+    if (!file) return;
+    setMagicLoading(true);
+    setMagicError(null);
+    setMagicText("");
+    setMagicMeta(null);
+
+    try {
+      const res = await fetch(`${BASE}/api/voice/magic-text`, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "application/octet-stream" },
+        body: file,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error((data as { error?: string }).error ?? "Error convirtiendo audio");
+      }
+      const result = data as { encodedText: string; frameCount: number; durationSeconds: number; encoding: string };
+      setMagicText(result.encodedText ?? "");
+      setMagicMeta({
+        frameCount: result.frameCount ?? 0,
+        durationSeconds: result.durationSeconds ?? 0,
+        encoding: result.encoding ?? "lpc-int8-hex-v1",
+      });
+    } catch (e) {
+      setMagicError((e as Error).message);
+    } finally {
+      setMagicLoading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
@@ -253,6 +290,47 @@ export default function App() {
               </a>
             </div>
           )}
+
+          <div style={{ marginTop: 22, background: "#111113", borderRadius: 14, padding: "16px", border: "1px solid #27272a" }}>
+            <label style={{ display: "block", color: "#71717a", fontSize: 12, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>
+              VOZ A MAGIC TEXT
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*"
+              onChange={(e) => convertirVozAMagicText(e.target.files?.[0] ?? null)}
+              disabled={magicLoading}
+              style={{ width: "100%", color: "#a1a1aa", fontSize: 13, marginBottom: 12 }}
+            />
+            {magicLoading && (
+              <div style={{ color: "#d8b4fe", fontSize: 13 }}>Convirtiendo la voz en texto compacto...</div>
+            )}
+            {magicError && (
+              <div style={{ background: "#1c0a0a", border: "1px solid #7f1d1d", borderRadius: 10, padding: "10px 14px", color: "#fca5a5", fontSize: 13 }}>
+                {magicError}
+              </div>
+            )}
+            {magicText && (
+              <div>
+                <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
+                  {magicMeta?.encoding} · {magicMeta?.frameCount} frames · {magicMeta?.durationSeconds}s · {magicText.length} caracteres
+                </div>
+                <textarea
+                  readOnly
+                  value={magicText}
+                  rows={5}
+                  style={{ width: "100%", background: "#0a0a0d", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 10, padding: "10px 12px", fontSize: 12, outline: "none", resize: "vertical", boxSizing: "border-box", fontFamily: "monospace" }}
+                />
+                <button
+                  onClick={() => navigator.clipboard?.writeText(magicText).catch(() => {})}
+                  style={{ marginTop: 8, width: "100%", padding: "10px", borderRadius: 10, border: "1px solid #3f3f46", background: "#18181b", color: "#d8b4fe", fontSize: 13, fontWeight: 700, cursor: "pointer" }}
+                >
+                  Copiar magic text
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>

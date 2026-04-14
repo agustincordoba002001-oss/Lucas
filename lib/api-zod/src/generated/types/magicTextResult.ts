@@ -5,9 +5,6 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface HealthStatus {
-  status: string;
-}
 
 export interface MagicTextResult {
   encodedText: string;
@@ -18,8 +15,4 @@ export interface MagicTextResult {
   durationSeconds: number;
   encoding: string;
   maxDurationSeconds: number;
-}
-
-export interface ErrorResponse {
-  error: string;
 }

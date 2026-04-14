@@ -5,18 +5,25 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  ErrorResponse,
+  HealthStatus,
+  MagicTextResult,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +106,90 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Accepts a short audio file as a binary request body and returns an LPC-based compact hexadecimal representation.
+ * @summary Encode voice audio as compact magic text
+ */
+export const getVoiceToMagicTextUrl = () => {
+  return `/api/voice/magic-text`;
+};
+
+export const voiceToMagicText = async (
+  voiceToMagicTextBody: Blob,
+  options?: RequestInit,
+): Promise<MagicTextResult> => {
+  return customFetch<MagicTextResult>(getVoiceToMagicTextUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "audio/wav", ...options?.headers },
+    body: JSON.stringify(voiceToMagicTextBody),
+  });
+};
+
+export const getVoiceToMagicTextMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof voiceToMagicText>>,
+    TError,
+    { data: BodyType<Blob> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof voiceToMagicText>>,
+  TError,
+  { data: BodyType<Blob> },
+  TContext
+> => {
+  const mutationKey = ["voiceToMagicText"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof voiceToMagicText>>,
+    { data: BodyType<Blob> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return voiceToMagicText(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type VoiceToMagicTextMutationResult = NonNullable<
+  Awaited<ReturnType<typeof voiceToMagicText>>
+>;
+export type VoiceToMagicTextMutationBody = BodyType<Blob>;
+export type VoiceToMagicTextMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Encode voice audio as compact magic text
+ */
+export const useVoiceToMagicText = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof voiceToMagicText>>,
+    TError,
+    { data: BodyType<Blob> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof voiceToMagicText>>,
+  TError,
+  { data: BodyType<Blob> },
+  TContext
+> => {
+  return useMutation(getVoiceToMagicTextMutationOptions(options));
+};
