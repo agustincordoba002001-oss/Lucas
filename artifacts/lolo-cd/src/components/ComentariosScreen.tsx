@@ -202,7 +202,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
     await fetch(`${BASE}/api/comments/${id}`, { method: "DELETE" }).catch(() => {});
   };
 
-  const puedeGuardar = !!nuevoTexto.trim() && !enviando && !grabando && !procesandoPhoton;
+  const puedeGuardar = !!nuevoTexto.trim() && !!photonInfo && !enviando && !grabando && !procesandoPhoton;
 
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
@@ -212,7 +212,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
             COMENTARIOS PHOTON {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            texto + cápsula vocal · Photon guarda ~27 bytes · reproduce regenerando audio sin guardar WAV/MP3
+            solo Photon · guarda cápsula diminuta · primer play genera audio · después queda cacheado para siempre
           </div>
         </div>
         <div>
@@ -234,7 +234,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }} />
         <textarea value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agregarComentario(); } }}
-          placeholder="Escribí qué debe regenerar la voz... (Enter para guardar)" rows={2}
+          placeholder="Escribí qué debe decir el comentario Photon... (grabá una cápsula para poder guardar)" rows={2}
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" }} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
           {!grabando
@@ -261,7 +261,7 @@ export default function ComentariosScreen({ voiceId = "darwin" }: Props) {
         )}
         <button onClick={agregarComentario} disabled={!puedeGuardar}
           style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: puedeGuardar ? "pointer" : "not-allowed", background: puedeGuardar ? "rgba(168,85,247,0.15)" : "#18181b", color: puedeGuardar ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600 }}>
-          {enviando ? "Guardando..." : photonInfo ? "✦ Guardar comentario Photon" : "✦ Guardar comentario normal"}
+          {enviando ? "Guardando..." : photonInfo ? "✦ Guardar comentario Photon" : "Grabá una cápsula Photon primero"}
         </button>
       </div>
 

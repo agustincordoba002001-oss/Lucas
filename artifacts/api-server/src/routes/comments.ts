@@ -92,11 +92,13 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
   let audioMap: AudioMap = {};
   try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
 
+  const cacheKey = record.photon_capsule ? `photon:${voiceId}` : voiceId;
+
   // ── Replay: audio ya generado, servir directo desde la BD (~5ms) ─────────
-  if (!record.photon_capsule && audioMap[voiceId]?.b64) {
-    const { ct, b64 } = audioMap[voiceId];
+  if (audioMap[cacheKey]?.b64) {
+    const { ct, b64 } = audioMap[cacheKey];
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", "CACHED");
+    res.setHeader("X-Seed", record.photon_capsule ? "PHOTON-CACHED" : "CACHED");
     res.send(Buffer.from(b64, "base64"));
     return;
   }
@@ -112,14 +114,12 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
     const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    if (!record.photon_capsule) {
-      audioMap[voiceId] = { ct, b64: buf.toString("base64") };
-      db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
-        .run(JSON.stringify(audioMap), id);
-    }
+    audioMap[cacheKey] = { ct, b64: buf.toString("base64") };
+    db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
+      .run(JSON.stringify(audioMap), id);
 
     res.setHeader("Content-Type", ct);
-    res.setHeader("X-Seed", record.photon_capsule ? "PHOTON-REGENERATED" : "MATERIALIZED");
+    res.setHeader("X-Seed", record.photon_capsule ? "PHOTON-MATERIALIZED" : "MATERIALIZED");
     res.send(buf);
   } catch (e) {
     res.status(503).json({ error: (e as Error).message });
@@ -137,6 +137,7 @@ commentsRouter.post("/comments", (req, res) => {
     photonEncoding?: string;
   };
   if (!texto?.trim()) { res.status(400).json({ error: "texto requerido" }); return; }
+  if (!photonCapsule?.trim()) { res.status(400).json({ error: "cápsula Photon requerida" }); return; }
   const id = Date.now().toString();
   db.prepare("INSERT INTO comentarios (id, autor, texto, photon_capsule, photon_bytes, photon_mode, photon_encoding) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
     id,
