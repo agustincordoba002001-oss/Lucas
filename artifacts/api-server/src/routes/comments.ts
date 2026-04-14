@@ -60,16 +60,9 @@ commentsRouter.get("/comments", (req, res) => {
 
 // ── GET /comments/:id/audio ───────────────────────────────────────────────────
 //
-//  PROSODY FINGERPRINT — sistema único
-//
-//  Primera vez (genera una sola vez):
-//    texto → TTS completo (~650ms) → audio
-//    + WORLD extrae F0 + energía → comprime → ~400 bytes → guarda en BD
-//
-//  Siguientes veces (~200ms, no se regenera):
-//    texto + huella → Piper + timbre Darwin + F0 guardada → audio
-//
-//  Storage: ~500-700 bytes por comentario (base64 en BD) ≈ < 1 GB para 1M frases.
+//  Primera vez → TTS completo (~650ms) → audio guardado como base64 en BD.
+//  Siguientes veces → se lee directo de la BD → instantáneo (~5ms).
+//  Misma voz, misma calidad, generado una sola vez para siempre.
 //
 commentsRouter.get("/comments/:id/audio", async (req, res) => {
   const id      = req.params.id;
@@ -79,34 +72,20 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
   if (!record) { res.status(404).json({ error: "No encontrado" }); return; }
 
-  type AudioMap = Record<string, { fingerprint?: string }>;
+  type AudioMap = Record<string, { ct: string; b64: string }>;
   let audioMap: AudioMap = {};
   try { audioMap = JSON.parse(record.audio_data ?? "{}"); } catch { audioMap = {}; }
 
-  // ── Replay: reconstruir desde la huella prosódica (~200ms) ───────────────
-  if (audioMap[voiceId]?.fingerprint) {
-    try {
-      const pfRes = await fetch(`${TTS_SERVICE}/prosody/synthesize`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({
-          texto:           record.texto,
-          fingerprint_b64: audioMap[voiceId].fingerprint,
-        }),
-      });
-      if (!pfRes.ok) throw new Error(`Prosody synth error ${pfRes.status}`);
-      const buf = Buffer.from(await pfRes.arrayBuffer());
-      res.setHeader("Content-Type", "audio/wav");
-      res.setHeader("X-Seed", "FINGERPRINT");
-      res.send(buf);
-      return;
-    } catch (e) {
-      // Si falla la síntesis desde huella, caer al flujo normal
-      console.warn("[PROSODY] Síntesis desde huella falló, regenerando:", (e as Error).message);
-    }
+  // ── Replay: audio ya generado, servir directo desde la BD (~5ms) ─────────
+  if (audioMap[voiceId]?.b64) {
+    const { ct, b64 } = audioMap[voiceId];
+    res.setHeader("Content-Type", ct);
+    res.setHeader("X-Seed", "CACHED");
+    res.send(Buffer.from(b64, "base64"));
+    return;
   }
 
-  // ── Primera vez: TTS completo → extraer huella → guardar en BD ───────────
+  // ── Primera vez: generar y guardar para siempre ───────────────────────────
   try {
     const ttsRes = await fetch(TTS_API, {
       method:  "POST",
@@ -117,22 +96,9 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
     const buf = Buffer.from(await ttsRes.arrayBuffer());
 
-    // Extraer huella prosódica en segundo plano (no bloquea la respuesta)
-    const wavB64 = buf.toString("base64");
-    fetch(`${TTS_SERVICE}/prosody/extract`, {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ wav_b64: wavB64 }),
-    }).then(async (pfRes) => {
-      if (!pfRes.ok) { console.warn("[PROSODY] Extract falló:", pfRes.status); return; }
-      const { fingerprint_b64, compressed_bytes } = await pfRes.json() as
-        { fingerprint_b64: string; compressed_bytes: number };
-      audioMap[voiceId] = { fingerprint: fingerprint_b64 };
-      db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
-        .run(JSON.stringify(audioMap), id);
-      console.log(`[PROSODY] Huella guardada para ${id} — ${compressed_bytes} bytes (~${
-        Math.round(fingerprint_b64.length / 1024 * 10) / 10} KB en BD)`);
-    }).catch((e) => console.warn("[PROSODY] Error extrayendo huella:", e));
+    audioMap[voiceId] = { ct, b64: buf.toString("base64") };
+    db.prepare("UPDATE comentarios SET audio_data = ? WHERE id = ?")
+      .run(JSON.stringify(audioMap), id);
 
     res.setHeader("Content-Type", ct);
     res.setHeader("X-Seed", "MATERIALIZED");
