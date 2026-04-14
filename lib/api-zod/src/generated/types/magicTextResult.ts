@@ -15,4 +15,10 @@ export interface MagicTextResult {
   durationSeconds: number;
   encoding: string;
   maxDurationSeconds: number;
+  mode: string;
+  estimatedBytes: number;
+  millionThirtySecondEstimateGb: number;
+  reconstructable: boolean;
+  regenerative?: boolean;
+  note?: string;
 }

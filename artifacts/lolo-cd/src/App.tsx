@@ -20,7 +20,8 @@ export default function App() {
   const [magicLoading, setMagicLoading]     = useState(false);
   const [magicError, setMagicError]         = useState<string | null>(null);
   const [magicText, setMagicText]           = useState("");
-  const [magicMeta, setMagicMeta]           = useState<{ frameCount: number; durationSeconds: number; encoding: string } | null>(null);
+  const [magicMode, setMagicMode]           = useState("photon");
+  const [magicMeta, setMagicMeta]           = useState<{ frameCount: number; durationSeconds: number; encoding: string; estimatedBytes?: number; millionThirtySecondEstimateGb?: number; reconstructable?: boolean; regenerative?: boolean; note?: string } | null>(null);
   const fileInputRef    = useRef<HTMLInputElement>(null);
   const audioRef        = useRef<HTMLAudioElement>(null);
   const upgradeTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -137,7 +138,7 @@ export default function App() {
     setMagicMeta(null);
 
     try {
-      const res = await fetch(`${BASE}/api/voice/magic-text`, {
+      const res = await fetch(`${BASE}/api/voice/magic-text?mode=${encodeURIComponent(magicMode)}`, {
         method: "POST",
         headers: { "Content-Type": file.type || "application/octet-stream" },
         body: file,
@@ -146,12 +147,17 @@ export default function App() {
       if (!res.ok) {
         throw new Error((data as { error?: string }).error ?? "Error convirtiendo audio");
       }
-      const result = data as { encodedText: string; frameCount: number; durationSeconds: number; encoding: string };
+      const result = data as { encodedText: string; frameCount: number; durationSeconds: number; encoding: string; estimatedBytes?: number; millionThirtySecondEstimateGb?: number; reconstructable?: boolean; regenerative?: boolean; note?: string };
       setMagicText(result.encodedText ?? "");
       setMagicMeta({
         frameCount: result.frameCount ?? 0,
         durationSeconds: result.durationSeconds ?? 0,
         encoding: result.encoding ?? "lpc-int8-hex-v1",
+        estimatedBytes: result.estimatedBytes,
+        millionThirtySecondEstimateGb: result.millionThirtySecondEstimateGb,
+        reconstructable: result.reconstructable,
+        regenerative: result.regenerative,
+        note: result.note,
       });
     } catch (e) {
       setMagicError((e as Error).message);
@@ -293,8 +299,19 @@ export default function App() {
 
           <div style={{ marginTop: 22, background: "#111113", borderRadius: 14, padding: "16px", border: "1px solid #27272a" }}>
             <label style={{ display: "block", color: "#71717a", fontSize: 12, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>
-              VOZ A MAGIC TEXT
+              VOZ A MAGIC TEXT · LOLO PHOTON VOICE
             </label>
+            <select
+              value={magicMode}
+              onChange={(e) => { setMagicMode(e.target.value); setMagicText(""); setMagicMeta(null); setMagicError(null); }}
+              disabled={magicLoading}
+              style={{ width: "100%", background: "#0a0a0d", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 10, padding: "10px 12px", fontSize: 13, marginBottom: 12, outline: "none" }}
+            >
+              <option value="photon">Photon: cápsula tamaño foto para millones</option>
+              <option value="ultra">Ultra: mini audio reconstruible aproximado</option>
+              <option value="fingerprint">Huella: identificación, no audio</option>
+              <option value="standard">Standard: LPC detallado</option>
+            </select>
             <input
               ref={fileInputRef}
               type="file"
@@ -314,8 +331,19 @@ export default function App() {
             {magicText && (
               <div>
                 <div style={{ color: "#86efac", fontSize: 12, fontWeight: 700, marginBottom: 8 }}>
-                  {magicMeta?.encoding} · {magicMeta?.frameCount} frames · {magicMeta?.durationSeconds}s · {magicText.length} caracteres
+                  {magicMeta?.encoding} · {magicMeta?.durationSeconds}s · {magicText.length} caracteres · {magicMeta?.estimatedBytes ?? magicText.length} bytes
                 </div>
+                {magicMeta?.millionThirtySecondEstimateGb !== undefined && (
+                  <div style={{ color: "#d8b4fe", fontSize: 12, marginBottom: 8 }}>
+                    1 millón de audios de 30s en este modo: ~{magicMeta.millionThirtySecondEstimateGb} GB
+                    {magicMeta.regenerative ? " · regenerativo" : magicMeta.reconstructable ? " · reconstruible aproximado" : " · solo huella"}
+                  </div>
+                )}
+                {magicMeta?.note && (
+                  <div style={{ color: "#a1a1aa", fontSize: 12, marginBottom: 8, lineHeight: 1.5 }}>
+                    {magicMeta.note}
+                  </div>
+                )}
                 <textarea
                   readOnly
                   value={magicText}

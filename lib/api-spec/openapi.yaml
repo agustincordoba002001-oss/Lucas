@@ -32,6 +32,14 @@ paths:
       tags: [voice]
       summary: Encode voice audio as compact magic text
       description: Accepts a short audio file as a binary request body and returns an LPC-based compact hexadecimal representation.
+      parameters:
+        - in: query
+          name: mode
+          schema:
+            type: string
+            enum: [standard, ultra, fingerprint, photon]
+            default: ultra
+          description: Encoding mode. Photon is a tiny regenerative capsule, ultra is approximate/reconstructable, fingerprint is identification only, standard is detailed LPC.
       requestBody:
         required: true
         content:
@@ -94,6 +102,18 @@ components:
           type: string
         maxDurationSeconds:
           type: integer
+        mode:
+          type: string
+        estimatedBytes:
+          type: integer
+        millionThirtySecondEstimateGb:
+          type: number
+        reconstructable:
+          type: boolean
+        regenerative:
+          type: boolean
+        note:
+          type: string
       required:
         - encodedText
         - sampleRate
@@ -103,6 +123,10 @@ components:
         - durationSeconds
         - encoding
         - maxDurationSeconds
+        - mode
+        - estimatedBytes
+        - millionThirtySecondEstimateGb
+        - reconstructable
     ErrorResponse:
       type: object
       properties:

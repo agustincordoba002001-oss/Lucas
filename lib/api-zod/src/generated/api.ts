@@ -19,6 +19,17 @@ export const HealthCheckResponse = zod.object({
  * Accepts a short audio file as a binary request body and returns an LPC-based compact hexadecimal representation.
  * @summary Encode voice audio as compact magic text
  */
+export const voiceToMagicTextQueryModeDefault = `ultra`;
+
+export const VoiceToMagicTextQueryParams = zod.object({
+  mode: zod
+    .enum(["standard", "ultra", "fingerprint", "photon"])
+    .default(voiceToMagicTextQueryModeDefault)
+    .describe(
+      "Encoding mode. Photon is a tiny regenerative capsule, ultra is approximate\/reconstructable, fingerprint is identification only, standard is detailed LPC.",
+    ),
+});
+
 export const VoiceToMagicTextResponse = zod.object({
   encodedText: zod.string(),
   sampleRate: zod.number(),
@@ -28,4 +39,10 @@ export const VoiceToMagicTextResponse = zod.object({
   durationSeconds: zod.number(),
   encoding: zod.string(),
   maxDurationSeconds: zod.number(),
+  mode: zod.string(),
+  estimatedBytes: zod.number(),
+  millionThirtySecondEstimateGb: zod.number(),
+  reconstructable: zod.boolean(),
+  regenerative: zod.boolean().optional(),
+  note: zod.string().optional(),
 });

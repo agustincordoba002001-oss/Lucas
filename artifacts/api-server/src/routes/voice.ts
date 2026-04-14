@@ -20,9 +20,9 @@ function extensionFromContentType(contentType: string | undefined): string {
   return ".audio";
 }
 
-function runMagicTextEncoder(audioPath: string): Promise<unknown> {
+function runMagicTextEncoder(audioPath: string, mode: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("python3", [ENCODER_SCRIPT, audioPath], {
+    const proc = spawn("python3", [ENCODER_SCRIPT, audioPath, mode], {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -62,6 +62,12 @@ voiceRouter.post(
   "/voice/magic-text",
   raw({ type: ["audio/*", "application/octet-stream"], limit: MAX_AUDIO_BYTES }),
   async (req, res) => {
+    const mode = typeof req.query["mode"] === "string" ? req.query["mode"] : "ultra";
+    if (!["standard", "ultra", "fingerprint", "photon"].includes(mode)) {
+      res.status(400).json({ error: "Modo inválido. Usá standard, ultra, fingerprint o photon" });
+      return;
+    }
+
     const audio = req.body;
     if (!Buffer.isBuffer(audio) || audio.length === 0) {
       res.status(400).json({
@@ -73,7 +79,7 @@ voiceRouter.post(
     const tmpFile = join("/tmp", `magic_voice_${randomUUID()}${extensionFromContentType(req.headers["content-type"])}`);
     try {
       writeFileSync(tmpFile, audio);
-      const result = await runMagicTextEncoder(tmpFile);
+      const result = await runMagicTextEncoder(tmpFile, mode);
       res.json(result);
     } catch (e) {
       res.status(422).json({ error: (e as Error).message });

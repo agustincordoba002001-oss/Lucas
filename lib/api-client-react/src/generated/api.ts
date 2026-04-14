@@ -20,6 +20,7 @@ import type {
   ErrorResponse,
   HealthStatus,
   MagicTextResult,
+  VoiceToMagicTextParams,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -111,15 +112,28 @@ export function useHealthCheck<
  * Accepts a short audio file as a binary request body and returns an LPC-based compact hexadecimal representation.
  * @summary Encode voice audio as compact magic text
  */
-export const getVoiceToMagicTextUrl = () => {
-  return `/api/voice/magic-text`;
+export const getVoiceToMagicTextUrl = (params?: VoiceToMagicTextParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/voice/magic-text?${stringifiedParams}`
+    : `/api/voice/magic-text`;
 };
 
 export const voiceToMagicText = async (
   voiceToMagicTextBody: Blob,
+  params?: VoiceToMagicTextParams,
   options?: RequestInit,
 ): Promise<MagicTextResult> => {
-  return customFetch<MagicTextResult>(getVoiceToMagicTextUrl(), {
+  return customFetch<MagicTextResult>(getVoiceToMagicTextUrl(params), {
     ...options,
     method: "POST",
     headers: { "Content-Type": "audio/wav", ...options?.headers },
@@ -134,14 +148,14 @@ export const getVoiceToMagicTextMutationOptions = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof voiceToMagicText>>,
     TError,
-    { data: BodyType<Blob> },
+    { data: BodyType<Blob>; params?: VoiceToMagicTextParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof voiceToMagicText>>,
   TError,
-  { data: BodyType<Blob> },
+  { data: BodyType<Blob>; params?: VoiceToMagicTextParams },
   TContext
 > => {
   const mutationKey = ["voiceToMagicText"];
@@ -155,11 +169,11 @@ export const getVoiceToMagicTextMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof voiceToMagicText>>,
-    { data: BodyType<Blob> }
+    { data: BodyType<Blob>; params?: VoiceToMagicTextParams }
   > = (props) => {
-    const { data } = props ?? {};
+    const { data, params } = props ?? {};
 
-    return voiceToMagicText(data, requestOptions);
+    return voiceToMagicText(data, params, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -181,14 +195,14 @@ export const useVoiceToMagicText = <
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof voiceToMagicText>>,
     TError,
-    { data: BodyType<Blob> },
+    { data: BodyType<Blob>; params?: VoiceToMagicTextParams },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof voiceToMagicText>>,
   TError,
-  { data: BodyType<Blob> },
+  { data: BodyType<Blob>; params?: VoiceToMagicTextParams },
   TContext
 > => {
   return useMutation(getVoiceToMagicTextMutationOptions(options));

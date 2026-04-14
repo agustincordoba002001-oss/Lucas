@@ -9,3 +9,5 @@
 export * from "./errorResponse";
 export * from "./healthStatus";
 export * from "./magicTextResult";
+export * from "./voiceToMagicTextMode";
+export * from "./voiceToMagicTextParams";

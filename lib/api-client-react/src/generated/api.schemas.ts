@@ -18,8 +18,31 @@ export interface MagicTextResult {
   durationSeconds: number;
   encoding: string;
   maxDurationSeconds: number;
+  mode: string;
+  estimatedBytes: number;
+  millionThirtySecondEstimateGb: number;
+  reconstructable: boolean;
+  regenerative?: boolean;
+  note?: string;
 }
 
 export interface ErrorResponse {
   error: string;
 }
+
+export type VoiceToMagicTextParams = {
+  /**
+   * Encoding mode. Photon is a tiny regenerative capsule, ultra is approximate/reconstructable, fingerprint is identification only, standard is detailed LPC.
+   */
+  mode?: VoiceToMagicTextMode;
+};
+
+export type VoiceToMagicTextMode =
+  (typeof VoiceToMagicTextMode)[keyof typeof VoiceToMagicTextMode];
+
+export const VoiceToMagicTextMode = {
+  standard: "standard",
+  ultra: "ultra",
+  fingerprint: "fingerprint",
+  photon: "photon",
+} as const;
