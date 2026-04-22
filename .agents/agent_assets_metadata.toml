@@ -336,3 +336,123 @@ id = "XiGwl5omMJDo-4LqNs_HE"
 uri = "file://exports/photon_ultraliviano_demo.wav"
 type = "audio"
 title = "Audio demo Photon ultraliviano"
+
+[[outputs]]
+id = "4m7dna-4F6Bwp3oq2bmSC"
+uri = "file://attached_assets/laughs_darwin/darwin_01_baseline_natural.wav"
+type = "audio"
+title = "01 — Baseline natural"
+
+[[outputs]]
+id = "XIdClRgBbLRpNkhLw2as_"
+uri = "file://attached_assets/laughs_darwin/darwin_02_grave.wav"
+type = "audio"
+title = "02 — Más grave (-3 semis)"
+
+[[outputs]]
+id = "MemKn75rFgd_A07z8U4z1"
+uri = "file://attached_assets/laughs_darwin/darwin_03_muy_grave.wav"
+type = "audio"
+title = "03 — Muy grave (-5 semis)"
+
+[[outputs]]
+id = "sKbGVSnxkojrl_mEu1sHT"
+uri = "file://attached_assets/laughs_darwin/darwin_04_chato_serio.wav"
+type = "audio"
+title = "04 — Chato / serio (poca expresión)"
+
+[[outputs]]
+id = "kQG0XBHCEaOkwZ6HkHqpe"
+uri = "file://attached_assets/laughs_darwin/darwin_05_muy_expresivo.wav"
+type = "audio"
+title = "05 — Muy expresivo (mucho rango)"
+
+[[outputs]]
+id = "qadL9HHmPKCEYVNN-mFtV"
+uri = "file://attached_assets/laughs_darwin/darwin_06_muy_aireada.wav"
+type = "audio"
+title = "06 — Muy aireada (con jadeo)"
+
+[[outputs]]
+id = "bNvpVJObCNY9SamCE8YGq"
+uri = "file://attached_assets/laughs_darwin/darwin_07_limpia_seca.wav"
+type = "audio"
+title = "07 — Limpia / sin aire"
+
+[[outputs]]
+id = "yTf8Mv0rqcK3f8FFRfx1e"
+uri = "file://attached_assets/laughs_darwin/darwin_08_lenta.wav"
+type = "audio"
+title = "08 — Lenta"
+
+[[outputs]]
+id = "t-BbMHMVU2XRAF6XdqAgg"
+uri = "file://attached_assets/laughs_darwin/darwin_09_rapida.wav"
+type = "audio"
+title = "09 — Rápida"
+
+[[outputs]]
+id = "bzkkvWGGDhzPFf1j-MRHS"
+uri = "file://attached_assets/laughs_darwin/darwin_10_con_vibrato.wav"
+type = "audio"
+title = "10 — Con vibrato (tembleque)"
+
+[[outputs]]
+id = "7iW70vvniwmUByIfoNTTL"
+uri = "file://attached_assets/laughs_darwin/darwin_11_grave_aireada.wav"
+type = "audio"
+title = "11 — Grave + aireada"
+
+[[outputs]]
+id = "6fU4eoXwXsvsMRp0Ke8uK"
+uri = "file://attached_assets/laughs_darwin/darwin_12_grave_lenta.wav"
+type = "audio"
+title = "12 — Grave + lenta"
+
+[[outputs]]
+id = "2UWCCTBv4jJ9duxrAKHTc"
+uri = "file://attached_assets/laughs_darwin/darwin_13_grave_expresiva.wav"
+type = "audio"
+title = "13 — Grave + expresiva"
+
+[[outputs]]
+id = "dbGl3kgl97npsSx8l36og"
+uri = "file://attached_assets/laughs_darwin/darwin_14_carcajada_grave.wav"
+type = "audio"
+title = "14 — Carcajada grave"
+
+[[outputs]]
+id = "oJtHC6LxigOSlRYn3TiHF"
+uri = "file://attached_assets/laughs_darwin/darwin_15_risita_corta.wav"
+type = "audio"
+title = "15 — Risita corta"
+
+[[outputs]]
+id = "ekOUkSV3uGCdpBqP-A1j6"
+uri = "file://attached_assets/laughs_darwin/darwin_16_risita_grave_corta.wav"
+type = "audio"
+title = "16 — Risita grave corta"
+
+[[outputs]]
+id = "P4kJzTifetUr1tYOZHJ5j"
+uri = "file://attached_assets/laughs_darwin/darwin_17_risa_natural_humana.wav"
+type = "audio"
+title = "17 — Risa natural humana (mi favorita)"
+
+[[outputs]]
+id = "jDJ0LxirP3SperTEEpvTe"
+uri = "file://attached_assets/laughs_darwin/darwin_18_nervioso.wav"
+type = "audio"
+title = "18 — Nerviosa (tembleque rápido)"
+
+[[outputs]]
+id = "N5smPkCbUkalBedJ-6AQa"
+uri = "file://attached_assets/laughs_darwin/darwin_19_maleficio.wav"
+type = "audio"
+title = "19 — Tipo maléfica (grave + lenta)"
+
+[[outputs]]
+id = "_Lo7unqb0qfrm6XVSp5mX"
+uri = "file://attached_assets/laughs_darwin/darwin_20_cordial_calmo.wav"
+type = "audio"
+title = "20 — Cordial / calma"

@@ -662,17 +662,29 @@ def _build_voice_vq_bank(voice_id: str):
     return bank
 
 
-def _synthesize_cloned_laugh(voice_id: str) -> bytes | None:
+def _synthesize_cloned_laugh(voice_id: str, params: dict | None = None) -> bytes | None:
     """
-    Reconstruye la risa: F0 + aperiodicidad ORIGINALES de la risa real (la
-    "respiración" y el "ja-ja-ja"), pero cada frame espectral REEMPLAZADO
-    por el frame REAL más parecido de la voz objetivo (banco VQ).
+    Risa con timbre 100% del banco VQ + dinámica de risa humana real.
+    Parámetros opcionales (para generar variantes A/B):
+      • f0_shift_semis  (-6…+3)  — graves/agudos
+      • f0_var_scale    (0.5…2.5) — chato vs muy expresivo
+      • ap_mix          (0.0…1.0) — 1=todo aire de la risa, 0=todo voz limpia
+      • speed           (0.7…1.4) — más lento/rápido
+      • jitter_semis    (0…1.5)   — vibrato/temblor humano
+      • frames_limit    (int)     — risita corta (limita a N frames)
+    """
+    p = params or {}
+    f0_shift_semis = float(p.get("f0_shift_semis", -1.0))
+    f0_var_scale   = float(p.get("f0_var_scale", 1.4))
+    ap_mix         = float(np.clip(p.get("ap_mix", 0.7), 0.0, 1.0))
+    speed          = float(np.clip(p.get("speed", 1.0), 0.7, 1.4))
+    jitter_semis   = float(np.clip(p.get("jitter_semis", 0.0), 0.0, 1.5))
+    frames_limit   = int(p.get("frames_limit", 0))
 
-    El audio de salida está hecho 100% de espectros de la voz clonada,
-    pero conserva la dinámica humana de una risa real.
-    """
-    if voice_id in _LAUGH_WAV_CACHE:
-        return _LAUGH_WAV_CACHE[voice_id]
+    cache_key = (voice_id, f0_shift_semis, f0_var_scale, ap_mix, speed,
+                 jitter_semis, frames_limit)
+    if cache_key in _LAUGH_WAV_CACHE:
+        return _LAUGH_WAV_CACHE[cache_key]
 
     laugh = _analyze_laugh_world()
     if laugh is None:
@@ -684,51 +696,63 @@ def _synthesize_cloned_laugh(voice_id: str) -> bytes | None:
     f0_l = laugh["f0"].copy()
     sp_l = laugh["sp"]
     ap_l = laugh["ap"]
+
+    # Limitar largo si es una "risita"
+    if frames_limit > 0 and frames_limit < len(f0_l):
+        f0_l = f0_l[:frames_limit]
+        sp_l = sp_l[:frames_limit]
+        ap_l = ap_l[:frames_limit]
     n_frames = sp_l.shape[0]
 
-    # ── 1) Reemplazo espectral: cada frame de la risa → frame real del banco
-    log_sp_l = np.log(sp_l + 1e-10).astype(np.float32)            # (N, 513)
-    refs     = bank["log_sp"]                                     # (M, 513)
+    # ── 1) VQ espectral: cada frame → frame REAL del banco de la voz ────────
+    log_sp_l = np.log(sp_l + 1e-10).astype(np.float32)
+    refs     = bank["log_sp"]
     ref_n    = bank["norms"]
-    src_n    = np.sum(log_sp_l ** 2, axis=1)                      # (N,)
-    # dist² = ||src||² + ||ref||² − 2·src·refᵀ
-    dot      = log_sp_l @ refs.T                                  # (N, M)
+    src_n    = np.sum(log_sp_l ** 2, axis=1)
+    dot      = log_sp_l @ refs.T
     dists    = src_n[:, None] + ref_n[None] - 2.0 * dot
-    nearest  = np.argmin(dists, axis=1)                           # (N,)
-    sp_out   = np.exp(refs[nearest]).astype(np.float64)           # (N, 513)
+    nearest  = np.argmin(dists, axis=1)
+    sp_out   = np.exp(refs[nearest]).astype(np.float64)
 
-    # ── 2) F0: forma de la risa, pero trasladada al rango de la voz ─────────
-    voiced  = f0_l > 0
-    f0_out  = f0_l.copy()
+    # ── 2) F0: forma de la risa transferida al rango de la voz ──────────────
+    voiced = f0_l > 0
+    f0_out = f0_l.copy()
     if voiced.any():
         log_f0_l   = np.log(np.maximum(f0_l[voiced], 1.0))
         l_mu, l_sd = float(np.mean(log_f0_l)), float(np.std(log_f0_l)) or 0.01
-        # Preserva la entonación (forma) y la traslada al rango de la voz
-        # objetivo, comprimiendo un poco la varianza para evitar saltos extremos
+        target_mu  = bank["f0_log_mu"] + f0_shift_semis * (np.log(2) / 12.0)
+        target_sd  = bank["f0_log_sd"] * f0_var_scale
         f0_out[voiced] = np.exp(
-            bank["f0_log_mu"]
-            + (bank["f0_log_sd"] * 1.4) * (log_f0_l - l_mu) / l_sd
+            target_mu + target_sd * (log_f0_l - l_mu) / l_sd
         )
-        f0_out[voiced] = np.clip(f0_out[voiced], 60.0, 500.0)
+        # Vibrato/jitter humano (microvariaciones de pitch)
+        if jitter_semis > 0.01:
+            rng = np.random.default_rng(42)
+            n_v = int(np.sum(voiced))
+            wob = rng.standard_normal(n_v).cumsum()
+            wob = wob / (np.std(wob) + 1e-9) * jitter_semis
+            f0_out[voiced] = f0_out[voiced] * (2 ** (wob / 12.0))
+        f0_out[voiced] = np.clip(f0_out[voiced], 55.0, 500.0)
 
-    # ── 3) Aperiodicidad: 70% de la risa (mantiene "soplo" y respiración) +
-    #       30% de la voz (suaviza ataques metálicos). Esto es lo clave para
-    #       que suene a humano riendo y no a voz pitched ───────────────────
-    ap_voice = np.tile(bank["mean_ap"], (n_frames, 1))            # (N, 513)
-    ap_out   = (0.7 * ap_l + 0.3 * ap_voice).astype(np.float64)
-    ap_out   = np.clip(ap_out, 0.0, 1.0)
+    # ── 3) AP: mezcla risa-real (aire) + voz (limpio) ───────────────────────
+    ap_voice = np.tile(bank["mean_ap"], (n_frames, 1))
+    ap_out   = np.clip(ap_mix * ap_l + (1.0 - ap_mix) * ap_voice, 0.0, 1.0)
 
     # ── 4) Síntesis WORLD ───────────────────────────────────────────────────
     y_out = pw.synthesize(f0_out, sp_out, ap_out, WORLD_SR).astype(np.float32)
 
-    # ── 5) Pequeño shaping final ────────────────────────────────────────────
-    # Recortar silencios largos al inicio/fin para una risa natural
+    # ── 5) Velocidad (time-stretch del resultado) ───────────────────────────
+    if abs(speed - 1.0) > 0.01:
+        try:
+            y_out = librosa.effects.time_stretch(y=y_out, rate=speed)
+        except Exception:
+            pass
+
+    # ── 6) Trim + resample al SR nativo de la voz ───────────────────────────
     try:
         y_out, _idx = librosa.effects.trim(y_out, top_db=35)
     except Exception:
         pass
-
-    # Re-muestrear al SR nativo de la voz para que pegue limpio con el TTS
     sr_out = bank["sr_native"]
     if sr_out != WORLD_SR:
         y_out = librosa.resample(y_out, orig_sr=WORLD_SR, target_sr=sr_out)
@@ -740,9 +764,10 @@ def _synthesize_cloned_laugh(voice_id: str) -> bytes | None:
     buf = io.BytesIO()
     sf.write(buf, y_out, sr_out, format="WAV", subtype="PCM_16")
     wav_bytes = buf.getvalue()
-    _LAUGH_WAV_CACHE[voice_id] = wav_bytes
-    print(f"[LAUGH-DNA] Risa clonada VQ-WORLD para '{voice_id}' "
-          f"({len(wav_bytes)} bytes, {len(y_out)/sr_out:.2f}s, sr={sr_out})", flush=True)
+    _LAUGH_WAV_CACHE[cache_key] = wav_bytes
+    print(f"[LAUGH-DNA] Variante '{voice_id}' shift={f0_shift_semis:+.1f} "
+          f"var={f0_var_scale:.2f} ap={ap_mix:.2f} sp={speed:.2f} "
+          f"jit={jitter_semis:.2f} → {len(y_out)/sr_out:.2f}s", flush=True)
     return wav_bytes
 
 
@@ -757,8 +782,9 @@ def laugh_clone():
     voice_id = (d.get("voice") or "").strip()
     if not voice_id:
         return jsonify({"error": "voice requerido"}), 400
+    params = d.get("params") if isinstance(d.get("params"), dict) else None
     try:
-        wav = _synthesize_cloned_laugh(voice_id)
+        wav = _synthesize_cloned_laugh(voice_id, params)
     except Exception as e:
         return jsonify({"error": f"Error generando risa: {e}"}), 500
     if not wav:
