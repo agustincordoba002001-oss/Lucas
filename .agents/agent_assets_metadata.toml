@@ -456,3 +456,123 @@ id = "_Lo7unqb0qfrm6XVSp5mX"
 uri = "file://attached_assets/laughs_darwin/darwin_20_cordial_calmo.wav"
 type = "audio"
 title = "20 — Cordial / calma"
+
+[[outputs]]
+id = "G-eI46CXMrwAj1K6WQZPt"
+uri = "file://attached_assets/laughs_v4/v4_01_grave_profundo.wav"
+type = "audio"
+title = "01 — Grave profundo (muy bajo)"
+
+[[outputs]]
+id = "C_oRqNzAGry9wppO7dYXd"
+uri = "file://attached_assets/laughs_v4/v4_02_grave_masculino.wav"
+type = "audio"
+title = "02 — Grave masculino"
+
+[[outputs]]
+id = "1Vo4NcHJDcGZGUMLyiZ7t"
+uri = "file://attached_assets/laughs_v4/v4_03_grave_natural.wav"
+type = "audio"
+title = "03 — Grave natural"
+
+[[outputs]]
+id = "u7Iuav87Z4kYfK5O9Ce8A"
+uri = "file://attached_assets/laughs_v4/v4_04_grave_suave.wav"
+type = "audio"
+title = "04 — Grave suave"
+
+[[outputs]]
+id = "G6ae5dtDkx_V6mEizvdh2"
+uri = "file://attached_assets/laughs_v4/v4_05_medio_masculino.wav"
+type = "audio"
+title = "05 — Medio masculino"
+
+[[outputs]]
+id = "YHgctw_hSpwAa0vvnTJhv"
+uri = "file://attached_assets/laughs_v4/v4_06_medio_natural.wav"
+type = "audio"
+title = "06 — Medio natural"
+
+[[outputs]]
+id = "lPeqekHxG7ynwjptqfEHk"
+uri = "file://attached_assets/laughs_v4/v4_07_medio_suave.wav"
+type = "audio"
+title = "07 — Medio suave"
+
+[[outputs]]
+id = "-F2aXVaufKBTUKQ3LJV-L"
+uri = "file://attached_assets/laughs_v4/v4_08_natural_humana_a.wav"
+type = "audio"
+title = "08 — Natural humana A"
+
+[[outputs]]
+id = "qI92ZiUEoIpCOIscdx0jy"
+uri = "file://attached_assets/laughs_v4/v4_09_natural_humana_b.wav"
+type = "audio"
+title = "09 — Natural humana B"
+
+[[outputs]]
+id = "XGeCQF72RhgsVFIVDfOU9"
+uri = "file://attached_assets/laughs_v4/v4_10_natural_humana_c.wav"
+type = "audio"
+title = "10 — Natural humana C"
+
+[[outputs]]
+id = "qKj_hWwz1g_ntOWlhFQ0K"
+uri = "file://attached_assets/laughs_v4/v4_11_carcajada_grave.wav"
+type = "audio"
+title = "11 — Carcajada grave (con jadeo)"
+
+[[outputs]]
+id = "5qIHtVI8gDIAqSaJhjsRG"
+uri = "file://attached_assets/laughs_v4/v4_12_carcajada_media.wav"
+type = "audio"
+title = "12 — Carcajada media"
+
+[[outputs]]
+id = "qbP2X3gCV88f303JYk46e"
+uri = "file://attached_assets/laughs_v4/v4_13_risa_limpia_grave.wav"
+type = "audio"
+title = "13 — Risa limpia grave"
+
+[[outputs]]
+id = "mU0YB44VpdVSvlQ5SyhLD"
+uri = "file://attached_assets/laughs_v4/v4_14_risa_limpia_media.wav"
+type = "audio"
+title = "14 — Risa limpia media"
+
+[[outputs]]
+id = "J_Wkf9eJG6z18KkUm_gy8"
+uri = "file://attached_assets/laughs_v4/v4_15_oso_grandote.wav"
+type = "audio"
+title = "15 — Oso grandote (muy grave)"
+
+[[outputs]]
+id = "-hXLEi_ySg-wbkiJlrrZU"
+uri = "file://attached_assets/laughs_v4/v4_16_villano.wav"
+type = "audio"
+title = "16 — Villano"
+
+[[outputs]]
+id = "zplSHUQ1pFblQ-fprJyrl"
+uri = "file://attached_assets/laughs_v4/v4_17_simpatico_a.wav"
+type = "audio"
+title = "17 — Simpático A"
+
+[[outputs]]
+id = "b7X2FugZ6587ePrJ_azas"
+uri = "file://attached_assets/laughs_v4/v4_18_simpatico_b.wav"
+type = "audio"
+title = "18 — Simpático B"
+
+[[outputs]]
+id = "Te04QHCDRb40oixYvQ8so"
+uri = "file://attached_assets/laughs_v4/v4_19_amigo_cercano.wav"
+type = "audio"
+title = "19 — Amigo cercano"
+
+[[outputs]]
+id = "fgV4ZOemu9RL4ZC-QxUVR"
+uri = "file://attached_assets/laughs_v4/v4_20_locutor_radial.wav"
+type = "audio"
+title = "20 — Locutor radial"
