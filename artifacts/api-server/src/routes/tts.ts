@@ -154,21 +154,21 @@ ttsRouter.get("/tts/voices", (_req, res) => {
 //  vocalizaciones que el clonador XTTS puede pronunciar manteniendo el timbre.
 //
 const EXPRESSIVE_TAGS: Record<string, string> = {
-  "risa":         "jajajaja",
-  "risa-fuerte":  "JAJAJAJAJA",
-  "risita":       "ji ji ji",
-  "carcajada":    "jajajajaja jajajaja",
-  "suspiro":      "ahhhh",
-  "suspiro-largo":"ahhhhhhhh",
-  "duda":         "eeehhh",
-  "mmm":          "mmmm",
-  "ah":           "ah",
-  "uf":           "ufff",
-  "carraspeo":    "ejem ejem",
-  "asombro":      "ohhh",
-  "tos":          "ejem ejem ejem",
-  "beso":         "muá",
-  "llanto":       "buuuaaa",
+  "risa":         "ja, ja, ja, ja, ja!",
+  "risa-fuerte":  "JA! JA! JA! JA! JA!",
+  "risita":       "je, je, je.",
+  "carcajada":    "ja, ja, ja, ja, ja, ja, ja, ja!",
+  "suspiro":      "aaaaah...",
+  "suspiro-largo":"aaaaaaaaaah...",
+  "duda":         "eeeeeh...",
+  "mmm":          "mmmmm.",
+  "ah":           "ah!",
+  "uf":           "uuuuf.",
+  "carraspeo":    "ejem, ejem.",
+  "asombro":      "oooooh!",
+  "tos":          "ejem, ejem, ejem.",
+  "beso":         "muá!",
+  "llanto":       "buuuaaa, buuuaaa...",
 };
 
 function expandExpressiveTags(text: string): string {

@@ -146,9 +146,35 @@ function normalizeWord(raw: string): string {
   return raw.toLowerCase().normalize("NFC").replace(/[^\p{L}\p{N}'’-]+/gu, "");
 }
 
+const EXPRESSIVE_TAGS_LOCAL: Record<string, string> = {
+  "risa":         "ja ja ja ja ja",
+  "risa-fuerte":  "ja ja ja ja ja",
+  "risita":       "je je je",
+  "carcajada":    "ja ja ja ja ja ja ja ja",
+  "suspiro":      "aaaaah",
+  "suspiro-largo":"aaaaaaaaaah",
+  "duda":         "eeeeeh",
+  "mmm":          "mmmmm",
+  "ah":           "ah",
+  "uf":           "uuuuf",
+  "carraspeo":    "ejem ejem",
+  "asombro":      "oooooh",
+  "tos":          "ejem ejem ejem",
+  "beso":         "muá",
+  "llanto":       "buuuaaa buuuaaa",
+};
+
+function expandExpressiveTagsLocal(text: string): string {
+  return text.replace(/\[([a-záéíóúüñ-]+)\]/gi, (full, tag: string) => {
+    const key = tag.toLowerCase();
+    return EXPRESSIVE_TAGS_LOCAL[key] !== undefined ? ` ${EXPRESSIVE_TAGS_LOCAL[key]} ` : "";
+  });
+}
+
 function splitWords(text: string): string[] {
+  const expanded = expandExpressiveTagsLocal(text);
   const out: string[] = [];
-  for (const piece of text.split(/\s+/)) {
+  for (const piece of expanded.split(/\s+/)) {
     const norm = normalizeWord(piece);
     if (norm) out.push(norm);
   }
