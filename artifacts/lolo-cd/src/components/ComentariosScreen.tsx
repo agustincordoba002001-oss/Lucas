@@ -200,16 +200,28 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
     if (!texto || enviando || procesandoPhoton || grabando) return;
     setEnviando(true);
     try {
+      let capsule  = photonInfo?.encodedText;
+      let cBytes   = photonInfo?.estimatedBytes;
+      let cMode    = photonInfo?.mode;
+      let cEncoding = photonInfo?.encoding;
+      if (!capsule) {
+        let h = 0; for (let i = 0; i < texto.length; i++) h = ((h << 5) - h + texto.charCodeAt(i)) | 0;
+        const tag = Math.abs(h).toString(36).toUpperCase().padStart(8, "0").slice(0, 10);
+        capsule = `LPV1-AUTO-${tag}`;
+        cBytes = capsule.length;
+        cMode = "auto-text";
+        cEncoding = "lolo-photon-auto-text-v1";
+      }
       const res  = await fetch(`${BASE}/api/comments`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
         body:    JSON.stringify({
           autor: nuevoAutor.trim() || "Anónimo",
           texto,
-          photonCapsule: photonInfo?.encodedText,
-          photonBytes: photonInfo?.estimatedBytes,
-          photonMode: photonInfo?.mode,
-          photonEncoding: photonInfo?.encoding,
+          photonCapsule: capsule,
+          photonBytes: cBytes,
+          photonMode: cMode,
+          photonEncoding: cEncoding,
           storageMode,
           voiceId,
         }),
@@ -229,7 +241,7 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
     await fetch(`${BASE}/api/comments/${id}`, { method: "DELETE" }).catch(() => {});
   };
 
-  const puedeGuardar = !!nuevoTexto.trim() && !!photonInfo && !enviando && !grabando && !procesandoPhoton;
+  const puedeGuardar = !!nuevoTexto.trim() && !enviando && !grabando && !procesandoPhoton;
 
   return (
     <div style={{ background: "#18181b", borderRadius: 16, padding: "24px", border: "1px solid #27272a" }}>
@@ -325,7 +337,7 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
         )}
         <button onClick={agregarComentario} disabled={!puedeGuardar}
           style={{ width: "100%", padding: "9px", borderRadius: 8, border: "none", cursor: puedeGuardar ? "pointer" : "not-allowed", background: puedeGuardar ? "rgba(168,85,247,0.15)" : "#18181b", color: puedeGuardar ? "#d8b4fe" : "#3f3f46", fontSize: 13, fontWeight: 600 }}>
-          {enviando ? "Guardando..." : photonInfo ? "✦ Publicar comentario Photon" : "Grabá una cápsula Photon primero"}
+          {enviando ? "Guardando..." : photonInfo ? "✦ Publicar comentario Photon" : "✦ Publicar (cápsula automática)"}
         </button>
       </div>
 
