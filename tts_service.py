@@ -548,128 +548,242 @@ def piper():
 
 LAUGH_REF_PATH = "/home/runner/workspace/attached_assets/descarga_(2)_(1)_1776888865266.wav"
 
-# Caché: análisis WORLD COMPLETO de la risa de referencia (no solo medias)
-_LAUGH_FEATS = None     # {"f0", "sp", "ap", "mean_log_sp", "f0_median"}
-# Caché: WAV final ya sintetizado por voz (la risa es la misma para cada voz)
+# Perfil silábico de la risa de referencia (extraído UNA sola vez).
+# Es un set de instrucciones: "en t=0.05 hay una sílaba de 0.18s, con pitch
+# +2 semitonos sobre la mediana y un envelope de energía X".
+# CERO audio de la fuente queda guardado — sólo timing + curvas.
+_LAUGH_PROFILE = None
 _LAUGH_WAV_CACHE = {}
 
-# Mapa voz_id → lista de archivos de referencia para extraer su timbre.
-# Se usa para conocer la SP media (formantes) y F0 mediano de cada voz clonada.
-_VOICE_TIMBRE_REFS = {
-    "lolo-piper-patch":   ["/home/runner/workspace/attached_assets/clon_lolo_directo_(6)_1776048168673.wav"],
-    "darwin-piper-patch": _DARWIN_REFS,
-    "nexus-piper-patch":  ["/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx"],
-    "diever":             ["/home/runner/workspace/diever_referencia.wav"],
-    "darwin-xtts":        _DARWIN_REFS,
-    "nexus":              ["/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx"],
-    "nexus-ultra":        ["/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx"],
-}
 
-
-def _analyze_laugh_reference():
-    """Extrae F0, SP, AP COMPLETOS de la risa de referencia (una sola vez)."""
-    global _LAUGH_FEATS
-    if _LAUGH_FEATS is not None:
-        return _LAUGH_FEATS
+def _extract_laugh_profile():
+    """
+    Detecta sílabas de la risa de referencia y extrae, para cada una:
+      • start_t   — cuándo empieza (s)
+      • duration  — cuánto dura  (s)
+      • f0_semis  — semitonos de desviación respecto a la mediana global
+      • energy    — envolvente de energía normalizada (curva)
+    No guarda audio: sólo el "guion" rítmico-melódico de la risa.
+    """
+    global _LAUGH_PROFILE
+    if _LAUGH_PROFILE is not None:
+        return _LAUGH_PROFILE
     if not os.path.exists(LAUGH_REF_PATH):
         print(f"[LAUGH-DNA] ⚠ Referencia no encontrada: {LAUGH_REF_PATH}", flush=True)
         return None
-    print("[LAUGH-DNA] Analizando ADN expresivo de la risa de referencia…", flush=True)
-    y, _ = librosa.load(LAUGH_REF_PATH, sr=WORLD_SR, mono=True, duration=20.0)
-    y = y.astype(np.float64)
-    f0, t = pw.dio(y, WORLD_SR)
-    f0    = pw.stonemask(y, f0, t, WORLD_SR)
-    sp    = pw.cheaptrick(y, f0, t, WORLD_SR)
-    ap    = pw.d4c(y, f0, t, WORLD_SR)
-    voiced = f0 > 0
-    f0_median = float(np.median(f0[voiced])) if voiced.any() else 220.0
-    mean_log_sp = np.mean(np.log(sp + 1e-10), axis=0)
-    _LAUGH_FEATS = {
-        "f0": f0, "sp": sp, "ap": ap,
-        "mean_log_sp": mean_log_sp,
-        "f0_median": f0_median,
-        "n_frames": int(sp.shape[0]),
+
+    print("[LAUGH-DNA] Extrayendo perfil silábico de la risa de referencia…", flush=True)
+    sr = WORLD_SR
+    y, _ = librosa.load(LAUGH_REF_PATH, sr=sr, mono=True, duration=20.0)
+
+    # Onsets silábicos — cada "ja" empieza con un ataque marcado
+    onset_frames = librosa.onset.onset_detect(
+        y=y, sr=sr, hop_length=256, backtrack=True, units="frames"
+    )
+    onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=256)
+    boundaries  = list(onset_times) + [len(y) / sr]
+
+    # F0 global con WORLD (mejor que YIN para risas)
+    y64 = y.astype(np.float64)
+    f0, _t = pw.dio(y64, sr)
+    f0      = pw.stonemask(y64, f0, _t, sr)
+    voiced  = f0[f0 > 0]
+    ref_med = float(np.median(voiced)) if len(voiced) else 200.0
+
+    syllables = []
+    for i in range(len(boundaries) - 1):
+        t0, t1 = float(boundaries[i]), float(boundaries[i + 1])
+        dur    = t1 - t0
+        if dur < 0.06 or dur > 0.5:
+            continue
+        s0, s1 = int(t0 * sr), int(t1 * sr)
+        seg    = y[s0:s1]
+        if len(seg) < 200:
+            continue
+
+        # Pitch medio de esta sílaba (semitonos sobre la mediana de la risa)
+        f_start = max(0, int(t0 / 0.005))
+        f_end   = min(len(f0), int(t1 / 0.005))
+        seg_f0  = f0[f_start:f_end]
+        seg_v   = seg_f0[seg_f0 > 0]
+        f0_semis = (12.0 * float(np.log2(np.median(seg_v) / ref_med))
+                    if len(seg_v) and ref_med > 0 else 0.0)
+
+        # Envolvente de energía (RMS) — la "forma" del ja (sube y cae)
+        rms = librosa.feature.rms(y=seg, frame_length=256, hop_length=64)[0]
+        if rms.max() > 0:
+            rms = rms / rms.max()
+        # Compactar a 16 puntos para evitar guardar arrays grandes
+        env = np.interp(np.linspace(0, 1, 16),
+                        np.linspace(0, 1, len(rms)), rms).astype(np.float32)
+
+        syllables.append({
+            "start_t":  t0,
+            "duration": dur,
+            "f0_semis": f0_semis,
+            "energy":   env.tolist(),
+        })
+
+    _LAUGH_PROFILE = {
+        "syllables":     syllables,
+        "ref_f0_median": ref_med,
+        "total_dur":     float(boundaries[-1]),
     }
-    print(f"[LAUGH-DNA] Listo ✓ — {_LAUGH_FEATS['n_frames']} frames, "
-          f"f0_median={f0_median:.1f} Hz", flush=True)
-    return _LAUGH_FEATS
-
-
-def _voice_timbre_features(voice_id: str) -> dict | None:
-    """Devuelve {mean_log_sp, f0_median} de la voz objetivo, leyendo sus refs."""
-    refs = _VOICE_TIMBRE_REFS.get(voice_id)
-    if not refs:
-        return None
-    # Filtrar a archivos WAV existentes (.onnx no se puede analizar como audio)
-    wav_refs = [p for p in refs if p.lower().endswith((".wav", ".mp3")) and os.path.exists(p)]
-    if not wav_refs:
-        # Fallback: usar refs de Diever (cualquier voz masculina sirve como base)
-        wav_refs = [p for p in _DARWIN_REFS if os.path.exists(p)]
-        if not wav_refs:
-            return None
-    return _load_world_features_multi(wav_refs, f"laugh_timbre::{voice_id}")
+    print(f"[LAUGH-DNA] Perfil listo ✓ — {len(syllables)} sílabas, "
+          f"dur={_LAUGH_PROFILE['total_dur']:.2f}s", flush=True)
+    return _LAUGH_PROFILE
 
 
 def _synthesize_cloned_laugh(voice_id: str) -> bytes | None:
     """
-    Genera UN WAV de la voz `voice_id` riéndose con el patrón de la risa
-    de referencia. Cachea el resultado por voz (la risa siempre suena igual).
+    Construye la risa SINTETIZANDO "ja" con la voz objetivo y reshapeándolo
+    según el perfil de la risa de referencia. La salida contiene 100% audio
+    generado por la voz clonada — cero audio de la fuente original.
+
+    Pipeline:
+      1) Piper(voz_base) → "ja"           → audio en timbre genérico
+      2) Patch(piper_patch) sobre ese ja  → audio en TIMBRE DE LA VOZ CLONADA
+      3) Para cada sílaba del perfil:
+           - time-stretch a la duración de la sílaba
+           - pitch-shift al pitch de la sílaba
+           - aplicar la envolvente de energía
+      4) Concatenar con los gaps de silencio del perfil original
     """
     if voice_id in _LAUGH_WAV_CACHE:
         return _LAUGH_WAV_CACHE[voice_id]
 
-    laugh = _analyze_laugh_reference()
-    if laugh is None:
-        return None
-    timbre = _voice_timbre_features(voice_id)
-    if timbre is None:
-        print(f"[LAUGH-DNA] Sin timbre para {voice_id}", flush=True)
+    profile = _extract_laugh_profile()
+    if not profile or not profile["syllables"]:
         return None
 
-    # ── Transferencia de timbre ──────────────────────────────────────────────
-    # SP de la risa multiplicada por el ratio de envolventes:
-    #   sp_out = sp_laugh · exp(meanLogSp_voz - meanLogSp_risa)
-    # → mantiene la variación de formantes "ja/ji/je" pero con el cuerpo
-    #   espectral del clon.
-    sp_ratio = np.exp(timbre["mean_log_sp"] - laugh["mean_log_sp"])
-    sp_out   = np.clip(laugh["sp"] * sp_ratio[np.newaxis, :], 1e-10, None)
+    cfg = _PATCHED_VOICES.get(voice_id)
+    if not cfg:
+        # Sólo soportamos voces piper-patch directamente. XTTS y otras pueden
+        # mapear a una voz piper-patch equivalente.
+        fallback = {
+            "diever":      "lolo-piper-patch",   # ambas son la misma persona
+            "darwin-xtts": "darwin-piper-patch",
+            "nexus":       "nexus-piper-patch",
+            "nexus-ultra": "nexus-piper-patch",
+        }.get(voice_id)
+        if not fallback:
+            print(f"[LAUGH-DNA] Voz '{voice_id}' sin pipeline piper-patch", flush=True)
+            return None
+        cfg = _PATCHED_VOICES.get(fallback)
+        if not cfg:
+            return None
 
-    # ── Transposición de pitch al rango de la voz objetivo ───────────────────
-    f0_out = laugh["f0"].copy()
-    voiced = f0_out > 0
-    if voiced.any() and laugh["f0_median"] > 0 and timbre["f0_median"] > 0:
-        scale = timbre["f0_median"] / laugh["f0_median"]
-        # Permitimos hasta -1.5 octavas (mujer→hombre) y +0.5 oct
-        scale = float(np.clip(scale, 0.35, 1.5))
-        f0_out[voiced] = laugh["f0"][voiced] * scale
-        # Recorte de seguridad
-        f0_out[voiced] = np.clip(f0_out[voiced], 50.0, 500.0)
+    base_model = _piper.get(cfg["base"])
+    if not base_model:
+        print(f"[LAUGH-DNA] Modelo Piper base '{cfg['base']}' no cargado", flush=True)
+        return None
 
-    # ── La aperiodicidad (respiración) se conserva tal cual ──────────────────
-    # Esto es lo que hace que "suene a risa" (entrecortado, con aire entre ja's).
-    ap_out = laugh["ap"]
+    # ── 1+2) Sintetizar "ja" con la voz objetivo (Piper + patch) ────────────
+    base_audio = _wav_from_piper(base_model, "ja.")
+    if not base_audio:
+        return None
+    try:
+        mode = cfg.get("mode", "pitch")
+        if mode == "world":
+            base_audio = _patch_world(base_audio, cfg, voice_name=voice_id)
+        else:
+            base_audio = _patch_pitch(base_audio, cfg["ref"])
+    except Exception as e:
+        print(f"[LAUGH-DNA] Error patcheando ja base: {e}", flush=True)
+        return None
 
-    # ── Síntesis WORLD ───────────────────────────────────────────────────────
-    y_out = pw.synthesize(f0_out, sp_out, ap_out, WORLD_SR).astype(np.float32)
+    y_ja, sr = sf.read(io.BytesIO(base_audio), dtype="float32", always_2d=False)
+    if y_ja.ndim > 1:
+        y_ja = y_ja.mean(axis=1)
 
-    # Normalización suave
-    peak = float(np.max(np.abs(y_out))) if len(y_out) else 0.0
+    # Recortar silencios de la "ja." sintetizada para tener una sílaba pura
+    try:
+        y_ja, _idx = librosa.effects.trim(y_ja, top_db=30)
+    except Exception:
+        pass
+    if len(y_ja) < int(sr * 0.05):
+        print(f"[LAUGH-DNA] 'ja' base muy corto para '{voice_id}'", flush=True)
+        return None
+
+    # F0 mediano de la "ja" base — sirve para calcular shifts relativos
+    y_ja64 = y_ja.astype(np.float64)
+    f0_ja, _t = pw.dio(y_ja64, sr)
+    f0_ja      = pw.stonemask(y_ja64, f0_ja, _t, sr)
+    voiced_ja  = f0_ja[f0_ja > 0]
+    base_f0    = float(np.median(voiced_ja)) if len(voiced_ja) else 130.0
+
+    # F0 mediano de la voz objetivo (transponemos la mediana de la risa a este)
+    voice_f0_target = base_f0   # la "ja" ya viene patcheada al timbre destino
+
+    # ── 3+4) Construir la risa sílaba a sílaba ──────────────────────────────
+    out_chunks = []
+    cursor_t = 0.0
+    for syl in profile["syllables"]:
+        gap = syl["start_t"] - cursor_t
+        if gap > 0.005:
+            out_chunks.append(np.zeros(int(gap * sr), dtype=np.float32))
+
+        target_len = max(int(syl["duration"] * sr), int(0.04 * sr))
+
+        # Time-stretch usando phase vocoder
+        rate = max(0.4, min(3.0, len(y_ja) / float(target_len)))
+        try:
+            y_syl = librosa.effects.time_stretch(y=y_ja, rate=rate)
+        except Exception:
+            y_syl = (y_ja[:target_len] if len(y_ja) >= target_len
+                     else np.pad(y_ja, (0, target_len - len(y_ja))))
+
+        # Pitch-shift al delta semitónico de la sílaba
+        n_steps = float(np.clip(syl["f0_semis"], -8.0, 8.0))
+        if abs(n_steps) > 0.15:
+            try:
+                y_syl = librosa.effects.pitch_shift(y=y_syl, sr=sr, n_steps=n_steps)
+            except Exception:
+                pass
+
+        # Ajustar al largo exacto
+        if len(y_syl) > target_len:
+            y_syl = y_syl[:target_len]
+        elif len(y_syl) < target_len:
+            y_syl = np.pad(y_syl, (0, target_len - len(y_syl)))
+
+        # Envolvente de energía: cada "ja" arranca fuerte y cae
+        env_pts = np.array(syl["energy"], dtype=np.float32)
+        if len(env_pts) > 1:
+            env = np.interp(np.linspace(0, 1, len(y_syl)),
+                            np.linspace(0, 1, len(env_pts)),
+                            env_pts).astype(np.float32)
+            # Pequeño fade-in/out para evitar clicks
+            fade = max(2, int(0.005 * sr))
+            env[:fade]  *= np.linspace(0, 1, fade)
+            env[-fade:] *= np.linspace(1, 0, fade)
+            y_syl = (y_syl * env).astype(np.float32)
+
+        out_chunks.append(y_syl)
+        cursor_t = syl["start_t"] + syl["duration"]
+
+    if not out_chunks:
+        return None
+
+    y_out = np.concatenate(out_chunks)
+    peak  = float(np.max(np.abs(y_out))) if len(y_out) else 0.0
     if peak > 0:
-        y_out = (y_out / peak) * 0.92
+        y_out = (y_out / peak) * 0.9
 
-    out = io.BytesIO()
-    sf.write(out, y_out, WORLD_SR, format="WAV", subtype="PCM_16")
-    wav_bytes = out.getvalue()
+    buf = io.BytesIO()
+    sf.write(buf, y_out, sr, format="WAV", subtype="PCM_16")
+    wav_bytes = buf.getvalue()
     _LAUGH_WAV_CACHE[voice_id] = wav_bytes
-    print(f"[LAUGH-DNA] Risa clonada lista para '{voice_id}' "
-          f"({len(wav_bytes)} bytes, {len(y_out)/WORLD_SR:.2f}s)", flush=True)
+    print(f"[LAUGH-DNA] Risa clonada (sílabas) para '{voice_id}' "
+          f"({len(wav_bytes)} bytes, {len(y_out)/sr:.2f}s, sr={sr})", flush=True)
     return wav_bytes
 
 
 @app.post("/laugh-clone")
 def laugh_clone():
     """
-    Devuelve un WAV de la voz objetivo riéndose con el ADN de la risa de
+    Devuelve un WAV de la voz objetivo riéndose, construido sintetizando
+    "ja" con esa voz y reshapeándolo según el patrón de la risa de
     referencia. Cuerpo: {"voice": "lolo-piper-patch"}
     """
     d = request.get_json(force=True) or {}
@@ -686,10 +800,10 @@ def laugh_clone():
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
-# Pre-cargar el análisis de la risa al arrancar (en segundo plano)
+# Pre-extraer el perfil al arrancar (en segundo plano)
 def _init_laugh_dna():
     try:
-        _analyze_laugh_reference()
+        _extract_laugh_profile()
     except Exception as e:
         print(f"[LAUGH-DNA] Error inicial: {e}", flush=True)
 
