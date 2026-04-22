@@ -278,8 +278,28 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
           style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }} />
         <textarea value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)}
           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); agregarComentario(); } }}
-          placeholder="Escribí qué debe decir el comentario Photon... (grabá una cápsula o publicá desde el audio generado)" rows={2}
-          style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 10, fontFamily: "inherit" }} />
+          placeholder="Escribí qué debe decir el comentario... usá [risa] [suspiro] [duda] [pausa] para que la voz se ría o suspire" rows={2}
+          style={{ width: "100%", background: "#18181b", color: "#e4e4e7", border: "1px solid #27272a", borderRadius: 8, padding: "8px 12px", fontSize: 13, outline: "none", resize: "vertical", lineHeight: 1.5, boxSizing: "border-box", marginBottom: 8, fontFamily: "inherit" }} />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 10 }}>
+          {[
+            { tag: "[risa]",     label: "😂 risa" },
+            { tag: "[risita]",   label: "🙂 risita" },
+            { tag: "[carcajada]",label: "🤣 carcajada" },
+            { tag: "[suspiro]",  label: "😮‍💨 suspiro" },
+            { tag: "[duda]",     label: "🤔 duda" },
+            { tag: "[mmm]",      label: "mmm" },
+            { tag: "[ah]",       label: "ah" },
+            { tag: "[uf]",       label: "uf" },
+            { tag: "[asombro]",  label: "😯 asombro" },
+            { tag: "[carraspeo]",label: "ejem" },
+            { tag: "[pausa]",    label: "⋯ pausa" },
+          ].map(({ tag, label }) => (
+            <button key={tag} type="button" onClick={() => setNuevoTexto((t) => (t.endsWith(" ") || t.length === 0 ? t : t + " ") + tag + " ")}
+              style={{ padding: "3px 8px", borderRadius: 6, border: "1px solid #27272a", background: "#0f0f12", color: "#a1a1aa", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+              {label}
+            </button>
+          ))}
+        </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
           {!grabando
             ? <button onClick={empezarGrabacion} disabled={procesandoPhoton || enviando}
