@@ -117,6 +117,88 @@ try {
 try {
   db.exec("ALTER TABLE comentarios ADD COLUMN storage_mode TEXT");
 } catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN word_seq TEXT");
+} catch { /* columna ya existe */ }
+try {
+  db.exec("ALTER TABLE comentarios ADD COLUMN nexus_voice_id TEXT");
+} catch { /* columna ya existe */ }
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS voice_word_audio (
+    voice_id   TEXT NOT NULL,
+    word_norm  TEXT NOT NULL,
+    audio      BLOB NOT NULL,
+    bytes      INTEGER NOT NULL,
+    ct         TEXT NOT NULL DEFAULT 'audio/wav',
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (voice_id, word_norm)
+  );
+`);
+
+const NEXUS_VOICE_WHITELIST = new Set([
+  "darwin-xtts", "diever", "nexus", "nexus-ultra",
+  "nexus-piper-patch", "lolo-piper-patch", "darwin-piper-patch",
+  "claude-mx", "daniela-ar", "carlfm-es", "davefx-es",
+]);
+
+function normalizeWord(raw: string): string {
+  return raw.toLowerCase().normalize("NFC").replace(/[^\p{L}\p{N}'’-]+/gu, "");
+}
+
+function splitWords(text: string): string[] {
+  const out: string[] = [];
+  for (const piece of text.split(/\s+/)) {
+    const norm = normalizeWord(piece);
+    if (norm) out.push(norm);
+  }
+  return out;
+}
+
+function concatWavBuffers(bufs: Buffer[]): Buffer {
+  if (bufs.length === 0) throw new Error("Sin buffers WAV");
+  if (bufs.length === 1) return bufs[0];
+  const hdr      = bufs[0].slice(0, 44);
+  const pcmParts = bufs.map((b) => b.slice(44));
+  const totalPcm = Buffer.concat(pcmParts);
+  const out      = Buffer.alloc(44 + totalPcm.length);
+  hdr.copy(out, 0);
+  out.writeUInt32LE(totalPcm.length + 36, 4);
+  out.writeUInt32LE(totalPcm.length, 40);
+  totalPcm.copy(out, 44);
+  return out;
+}
+
+async function ensureWordInDict(voiceId: string, wordNorm: string): Promise<{ added: boolean; bytes: number }> {
+  const existing = db.prepare("SELECT bytes FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(voiceId, wordNorm) as { bytes: number } | undefined;
+  if (existing) return { added: false, bytes: existing.bytes };
+
+  const ttsRes = await fetch(TTS_API, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ texto: wordNorm, voiceId }),
+  });
+  if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para palabra "${wordNorm}"`);
+  const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
+  const buf = Buffer.from(await ttsRes.arrayBuffer());
+  if (!ct.includes("wav")) throw new Error(`La voz ${voiceId} no devuelve WAV (necesario para Nexus Decreciente)`);
+
+  db.prepare("INSERT OR IGNORE INTO voice_word_audio (voice_id, word_norm, audio, bytes, ct) VALUES (?, ?, ?, ?, ?)")
+    .run(voiceId, wordNorm, buf, buf.byteLength, ct);
+  return { added: true, bytes: buf.byteLength };
+}
+
+commentsRouter.get("/voice-dict/stats", (req, res) => {
+  const voiceId = (req.query.voiceId as string | undefined)?.trim();
+  if (voiceId) {
+    const row = db.prepare("SELECT COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio WHERE voice_id = ?").get(voiceId) as { words: number; bytes: number };
+    res.json({ voiceId, words: row.words, bytes: row.bytes });
+    return;
+  }
+  const rows = db.prepare("SELECT voice_id AS voiceId, COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio GROUP BY voice_id").all() as { voiceId: string; words: number; bytes: number }[];
+  const total = db.prepare("SELECT COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio").get() as { words: number; bytes: number };
+  res.json({ perVoice: rows, total });
+});
 
 // Migrar desde JSON si la tabla está vacía
 const count = db.prepare("SELECT COUNT(*) as n FROM comentarios").get() as { n: number };
@@ -158,7 +240,39 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
   const isPhoton = !!record.photon_capsule;
   const isPhotonLight = isPhoton && record.storage_mode === "photon-light";
+  const isNexusDecreciente = record.storage_mode === "nexus-decreciente";
   const cacheKey = photonCacheKey(voiceId, record.photon_capsule, record.texto);
+
+  if (isNexusDecreciente) {
+    const fullRow = db.prepare("SELECT word_seq, nexus_voice_id FROM comentarios WHERE id = ?").get(id) as { word_seq: string | null; nexus_voice_id: string | null } | undefined;
+    const dictVoice = fullRow?.nexus_voice_id || voiceId;
+    let words: string[] = [];
+    try { words = JSON.parse(fullRow?.word_seq ?? "[]"); } catch { words = []; }
+    if (words.length === 0) { res.status(404).json({ error: "Sin palabras en la secuencia" }); return; }
+
+    try {
+      const buffers: Buffer[] = [];
+      for (const w of words) {
+        let row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w) as { audio: Buffer } | undefined;
+        if (!row) {
+          await ensureWordInDict(dictVoice, w);
+          row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w) as { audio: Buffer } | undefined;
+        }
+        if (row?.audio) buffers.push(Buffer.from(row.audio));
+      }
+      if (buffers.length === 0) { res.status(503).json({ error: "No se pudo armar el audio" }); return; }
+      const audio = concatWavBuffers(buffers);
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-Seed", "NEXUS-DECRECIENTE");
+      res.setHeader("X-Nexus-Words", words.length.toString());
+      res.setHeader("X-Nexus-Voice", dictVoice);
+      res.send(audio);
+      return;
+    } catch (e) {
+      res.status(503).json({ error: (e as Error).message });
+      return;
+    }
+  }
 
   if (isPhotonLight) {
     const hit = getPhotonMemoryCache(cacheKey);
@@ -253,7 +367,7 @@ commentsRouter.post("/comments/warm", async (req, res) => {
 });
 
 // ── POST /comments ────────────────────────────────────────────────────────────
-commentsRouter.post("/comments", (req, res) => {
+commentsRouter.post("/comments", async (req, res) => {
   const { autor = "Anónimo", texto, photonCapsule, photonBytes, photonMode, photonEncoding, storageMode = "photon-permanent", voiceId = "darwin", audioData } = req.body as {
     autor?: string;
     texto?: string;
@@ -269,14 +383,43 @@ commentsRouter.post("/comments", (req, res) => {
   if (!photonCapsule?.trim()) { res.status(400).json({ error: "cápsula Photon requerida" }); return; }
   const id = Date.now().toString();
   let initialAudioData: string | null = null;
-  const safeStorageMode = storageMode === "photon-light" ? "photon-light" : "photon-permanent";
+  let safeStorageMode: "photon-light" | "photon-permanent" | "nexus-decreciente";
+  if (storageMode === "photon-light") safeStorageMode = "photon-light";
+  else if (storageMode === "nexus-decreciente") safeStorageMode = "nexus-decreciente";
+  else safeStorageMode = "photon-permanent";
+
+  let wordSeqJson: string | null = null;
+  let nexusVoiceId: string | null = null;
+  let nexusStats: { wordsTotal: number; wordsNew: number; dictBytesAdded: number } | null = null;
+
+  if (safeStorageMode === "nexus-decreciente") {
+    const dictVoice = NEXUS_VOICE_WHITELIST.has(voiceId) ? voiceId : "darwin-xtts";
+    const words = splitWords(texto.trim());
+    if (words.length === 0) { res.status(400).json({ error: "texto sin palabras válidas" }); return; }
+    let wordsNew = 0;
+    let bytesAdded = 0;
+    try {
+      for (const w of words) {
+        const r = await ensureWordInDict(dictVoice, w);
+        if (r.added) { wordsNew++; bytesAdded += r.bytes; }
+      }
+    } catch (e) {
+      res.status(503).json({ error: (e as Error).message });
+      return;
+    }
+    wordSeqJson = JSON.stringify(words);
+    nexusVoiceId = dictVoice;
+    nexusStats = { wordsTotal: words.length, wordsNew, dictBytesAdded: bytesAdded };
+  }
+
   if (safeStorageMode === "photon-permanent" && audioData?.b64?.trim()) {
     const safeVoiceId = typeof voiceId === "string" && voiceId.trim() ? voiceId.trim() : "darwin";
     const safeCt = audioData.ct?.trim() || "audio/wav";
     const cacheKey = photonCacheKey(safeVoiceId, photonCapsule.trim(), texto.trim());
     initialAudioData = JSON.stringify({ [cacheKey]: { ct: safeCt, b64: audioData.b64.trim() } });
   }
-  db.prepare("INSERT INTO comentarios (id, autor, texto, audio_data, photon_capsule, photon_bytes, photon_mode, photon_encoding, storage_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
+
+  db.prepare("INSERT INTO comentarios (id, autor, texto, audio_data, photon_capsule, photon_bytes, photon_mode, photon_encoding, storage_mode, word_seq, nexus_voice_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(
     id,
     (autor.trim() || "Anónimo"),
     texto.trim(),
@@ -286,6 +429,8 @@ commentsRouter.post("/comments", (req, res) => {
     photonMode?.trim() || null,
     photonEncoding?.trim() || null,
     safeStorageMode,
+    wordSeqJson,
+    nexusVoiceId,
   );
   res.status(201).json({
     id,
@@ -296,6 +441,8 @@ commentsRouter.post("/comments", (req, res) => {
     photonMode: photonMode?.trim() || null,
     photonEncoding: photonEncoding?.trim() || null,
     storageMode: safeStorageMode,
+    nexusVoiceId,
+    nexus: nexusStats,
   });
 });
 

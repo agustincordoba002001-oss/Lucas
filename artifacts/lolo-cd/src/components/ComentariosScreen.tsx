@@ -30,6 +30,8 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
   const [grabando, setGrabando]         = useState(false);
   const [procesandoPhoton, setProcesandoPhoton] = useState(false);
   const [photonInfo, setPhotonInfo]     = useState<PhotonInfo | null>(null);
+  const [storageMode, setStorageMode]   = useState<"photon-light" | "nexus-decreciente">("photon-light");
+  const [dictStats, setDictStats]       = useState<{ words: number; bytes: number } | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortRef = useRef(false);
@@ -65,6 +67,15 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
       body: JSON.stringify({ ids, voiceId }),
     }).catch(() => {});
   }, [comentarios, voiceId]);
+
+  const cargarDictStats = useCallback(async () => {
+    if (storageMode !== "nexus-decreciente") { setDictStats(null); return; }
+    try {
+      const r = await fetch(`${BASE}/api/voice-dict/stats?voiceId=${encodeURIComponent(voiceId)}`);
+      if (r.ok) setDictStats(await r.json());
+    } catch { /* ignore */ }
+  }, [storageMode, voiceId]);
+  useEffect(() => { cargarDictStats(); }, [cargarDictStats, comentarios.length]);
 
   const materializar = useCallback(async (c: Comentario): Promise<void> => {
     const res = await fetch(
@@ -199,7 +210,8 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
           photonBytes: photonInfo?.estimatedBytes,
           photonMode: photonInfo?.mode,
           photonEncoding: photonInfo?.encoding,
-          storageMode: "photon-light",
+          storageMode,
+          voiceId,
         }),
       });
       const nuevo: Comentario = await res.json();
@@ -227,7 +239,9 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
             COMENTARIOS PHOTON {comentarios.length > 0 && `· ${comentarios.length}`}
           </span>
           <div style={{ color: "#3f3f46", fontSize: 10, marginTop: 2 }}>
-            Nexus ultra liviano · precalienta en memoria · play casi instantáneo sin guardar audio
+            {storageMode === "nexus-decreciente"
+              ? "Nexus Decreciente · diccionario por voz/palabra · cada nuevo comentario pesa menos"
+              : "Nexus ultra liviano · precalienta en memoria · play casi instantáneo sin guardar audio"}
           </div>
         </div>
         <div>
@@ -242,6 +256,21 @@ export default function ComentariosScreen({ voiceId = "darwin", refreshKey = 0 }
           }
         </div>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+        <button onClick={() => setStorageMode("photon-light")} style={{ padding: "8px", borderRadius: 8, cursor: "pointer", border: `1px solid ${storageMode === "photon-light" ? "rgba(6,182,212,0.5)" : "#27272a"}`, background: storageMode === "photon-light" ? "rgba(6,182,212,0.1)" : "#18181b", color: storageMode === "photon-light" ? "#67e8f9" : "#71717a", fontSize: 12, fontWeight: 700 }}>
+          ULTRA LIVIANO
+        </button>
+        <button onClick={() => setStorageMode("nexus-decreciente")} style={{ padding: "8px", borderRadius: 8, cursor: "pointer", border: `1px solid ${storageMode === "nexus-decreciente" ? "rgba(168,85,247,0.5)" : "#27272a"}`, background: storageMode === "nexus-decreciente" ? "rgba(168,85,247,0.12)" : "#18181b", color: storageMode === "nexus-decreciente" ? "#d8b4fe" : "#71717a", fontSize: 12, fontWeight: 700 }}>
+          NEXUS DECRECIENTE
+        </button>
+      </div>
+
+      {storageMode === "nexus-decreciente" && dictStats && (
+        <div style={{ background: "rgba(168,85,247,0.06)", border: "1px solid rgba(168,85,247,0.2)", borderRadius: 8, padding: "8px 10px", color: "#d8b4fe", fontSize: 11, marginBottom: 10 }}>
+          Diccionario {voiceId}: <b>{dictStats.words}</b> palabras únicas · {(dictStats.bytes / 1024).toFixed(1)} KB · cada palabra nueva se guarda 1 sola vez para esta voz.
+        </div>
+      )}
 
       <div style={{ background: "#111113", borderRadius: 12, padding: "16px", border: "1px solid #27272a", marginBottom: 16 }}>
         <div style={{ color: "#71717a", fontSize: 11, fontWeight: 600, letterSpacing: "0.8px", marginBottom: 10 }}>NUEVO COMENTARIO PHOTON</div>
