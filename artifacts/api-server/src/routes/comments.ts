@@ -147,10 +147,10 @@ function normalizeWord(raw: string): string {
 }
 
 const EXPRESSIVE_TAGS_LOCAL: Record<string, string> = {
-  "risa":         "ja ja ja ja ja",
-  "risa-fuerte":  "ja ja ja ja ja",
-  "risita":       "je je je",
-  "carcajada":    "ja ja ja ja ja ja ja ja",
+  "risa":         "jajajajaja",
+  "risa-fuerte":  "jajajajajaja",
+  "risita":       "jejejeje",
+  "carcajada":    "jajajajajajajaja",
   "suspiro":      "aaaaah",
   "suspiro-largo":"aaaaaaaaaah",
   "duda":         "eeeeeh",

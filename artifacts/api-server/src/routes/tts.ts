@@ -155,28 +155,27 @@ ttsRouter.get("/tts/voices", (_req, res) => {
 //
 const EXPRESSIVE_TAGS: Record<string, string[]> = {
   "risa": [
-    "jajaja, jaja, ja!",
-    "ja, ja, ja, ja, ja!",
-    "ajajaja, ja!",
-    "jajaja, jaja...",
-    "jaja, ja ja, jaja!",
+    "jajajaja",
+    "ajajajaja",
+    "jajajajaja",
+    "jejejeje",
+    "jajajajajaja",
   ],
   "risa-fuerte": [
-    "JAJAJA! JAJA! JA, JA, JA!",
-    "AJAJAJA! AJAJA! JA!",
-    "JAJAJAJA, JAJAJA, JA!",
+    "JAJAJAJAJA",
+    "AJAJAJAJAJA",
+    "JAJAJAJAJAJA",
   ],
   "risita": [
-    "je, je, je.",
-    "jeje, je.",
-    "ji, ji, ji.",
-    "jejeje...",
+    "jejeje",
+    "jijijiji",
+    "jejejeje",
   ],
   "carcajada": [
-    "jajajaja, jajaja, jaja, ja, ja!",
-    "ajajajajaja, jajaja, ja, ja!",
-    "jajajajajaja, jajaja, ja!",
-    "ja ja ja ja ja, ja ja, ja, ja!",
+    "jajajajajajajaja",
+    "ajajajajajajaja",
+    "jajajajajajaja jajaja",
+    "jejejejejeje jajajaja",
   ],
   "suspiro": [
     "aaaaah...",
