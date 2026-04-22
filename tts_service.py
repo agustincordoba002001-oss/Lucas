@@ -524,6 +524,178 @@ def piper():
     return Response(audio, mimetype="audio/wav",
                     headers={"Cache-Control": "no-store"})
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  MOTOR DE RISA CLONADA  ·  "Laughter DNA Transfer"
+#
+#  La idea: una risa real tiene 3 capas en el dominio WORLD:
+#    1) F0 (curva de pitch)     → la MELODÍA del "ja-ja-ja" (sube y baja)
+#    2) Aperiodicidad (AP)      → la RESPIRACIÓN / el aire del "ha"
+#    3) Envolvente espectral SP → el TIMBRE de quién se ríe (formantes)
+#
+#  Las dos primeras (F0 + AP) son las que hacen que algo "suene a risa".
+#  La tercera es lo que identifica QUIÉN está riendo.
+#
+#  Lo que hacemos:
+#    • Tomamos F0 + AP de la risa de referencia (la "forma" de la risa)
+#    • La transponemos al rango de pitch de la voz objetivo (Lolo, Darwin…)
+#    • Reemplazamos su SP media por la SP media de la voz objetivo
+#      (manteniendo la variación relativa de formantes — los "ja"-"ji"-"je")
+#    • Sintetizamos con WORLD → tu voz clonada riéndose con esa cadencia
+#
+#  Cero audio de la fuente original en la salida: sólo el "patrón rítmico-
+#  melódico-respiratorio" de la risa, ejecutado por el timbre del clon.
+# ══════════════════════════════════════════════════════════════════════════════
+
+LAUGH_REF_PATH = "/home/runner/workspace/attached_assets/descarga_(2)_(1)_1776888865266.wav"
+
+# Caché: análisis WORLD COMPLETO de la risa de referencia (no solo medias)
+_LAUGH_FEATS = None     # {"f0", "sp", "ap", "mean_log_sp", "f0_median"}
+# Caché: WAV final ya sintetizado por voz (la risa es la misma para cada voz)
+_LAUGH_WAV_CACHE = {}
+
+# Mapa voz_id → lista de archivos de referencia para extraer su timbre.
+# Se usa para conocer la SP media (formantes) y F0 mediano de cada voz clonada.
+_VOICE_TIMBRE_REFS = {
+    "lolo-piper-patch":   ["/home/runner/workspace/attached_assets/clon_lolo_directo_(6)_1776048168673.wav"],
+    "darwin-piper-patch": _DARWIN_REFS,
+    "nexus-piper-patch":  ["/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx"],
+    "diever":             ["/home/runner/workspace/diever_referencia.wav"],
+    "darwin-xtts":        _DARWIN_REFS,
+    "nexus":              ["/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx"],
+    "nexus-ultra":        ["/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx"],
+}
+
+
+def _analyze_laugh_reference():
+    """Extrae F0, SP, AP COMPLETOS de la risa de referencia (una sola vez)."""
+    global _LAUGH_FEATS
+    if _LAUGH_FEATS is not None:
+        return _LAUGH_FEATS
+    if not os.path.exists(LAUGH_REF_PATH):
+        print(f"[LAUGH-DNA] ⚠ Referencia no encontrada: {LAUGH_REF_PATH}", flush=True)
+        return None
+    print("[LAUGH-DNA] Analizando ADN expresivo de la risa de referencia…", flush=True)
+    y, _ = librosa.load(LAUGH_REF_PATH, sr=WORLD_SR, mono=True, duration=20.0)
+    y = y.astype(np.float64)
+    f0, t = pw.dio(y, WORLD_SR)
+    f0    = pw.stonemask(y, f0, t, WORLD_SR)
+    sp    = pw.cheaptrick(y, f0, t, WORLD_SR)
+    ap    = pw.d4c(y, f0, t, WORLD_SR)
+    voiced = f0 > 0
+    f0_median = float(np.median(f0[voiced])) if voiced.any() else 220.0
+    mean_log_sp = np.mean(np.log(sp + 1e-10), axis=0)
+    _LAUGH_FEATS = {
+        "f0": f0, "sp": sp, "ap": ap,
+        "mean_log_sp": mean_log_sp,
+        "f0_median": f0_median,
+        "n_frames": int(sp.shape[0]),
+    }
+    print(f"[LAUGH-DNA] Listo ✓ — {_LAUGH_FEATS['n_frames']} frames, "
+          f"f0_median={f0_median:.1f} Hz", flush=True)
+    return _LAUGH_FEATS
+
+
+def _voice_timbre_features(voice_id: str) -> dict | None:
+    """Devuelve {mean_log_sp, f0_median} de la voz objetivo, leyendo sus refs."""
+    refs = _VOICE_TIMBRE_REFS.get(voice_id)
+    if not refs:
+        return None
+    # Filtrar a archivos WAV existentes (.onnx no se puede analizar como audio)
+    wav_refs = [p for p in refs if p.lower().endswith((".wav", ".mp3")) and os.path.exists(p)]
+    if not wav_refs:
+        # Fallback: usar refs de Diever (cualquier voz masculina sirve como base)
+        wav_refs = [p for p in _DARWIN_REFS if os.path.exists(p)]
+        if not wav_refs:
+            return None
+    return _load_world_features_multi(wav_refs, f"laugh_timbre::{voice_id}")
+
+
+def _synthesize_cloned_laugh(voice_id: str) -> bytes | None:
+    """
+    Genera UN WAV de la voz `voice_id` riéndose con el patrón de la risa
+    de referencia. Cachea el resultado por voz (la risa siempre suena igual).
+    """
+    if voice_id in _LAUGH_WAV_CACHE:
+        return _LAUGH_WAV_CACHE[voice_id]
+
+    laugh = _analyze_laugh_reference()
+    if laugh is None:
+        return None
+    timbre = _voice_timbre_features(voice_id)
+    if timbre is None:
+        print(f"[LAUGH-DNA] Sin timbre para {voice_id}", flush=True)
+        return None
+
+    # ── Transferencia de timbre ──────────────────────────────────────────────
+    # SP de la risa multiplicada por el ratio de envolventes:
+    #   sp_out = sp_laugh · exp(meanLogSp_voz - meanLogSp_risa)
+    # → mantiene la variación de formantes "ja/ji/je" pero con el cuerpo
+    #   espectral del clon.
+    sp_ratio = np.exp(timbre["mean_log_sp"] - laugh["mean_log_sp"])
+    sp_out   = np.clip(laugh["sp"] * sp_ratio[np.newaxis, :], 1e-10, None)
+
+    # ── Transposición de pitch al rango de la voz objetivo ───────────────────
+    f0_out = laugh["f0"].copy()
+    voiced = f0_out > 0
+    if voiced.any() and laugh["f0_median"] > 0 and timbre["f0_median"] > 0:
+        scale = timbre["f0_median"] / laugh["f0_median"]
+        # Permitimos hasta -1.5 octavas (mujer→hombre) y +0.5 oct
+        scale = float(np.clip(scale, 0.35, 1.5))
+        f0_out[voiced] = laugh["f0"][voiced] * scale
+        # Recorte de seguridad
+        f0_out[voiced] = np.clip(f0_out[voiced], 50.0, 500.0)
+
+    # ── La aperiodicidad (respiración) se conserva tal cual ──────────────────
+    # Esto es lo que hace que "suene a risa" (entrecortado, con aire entre ja's).
+    ap_out = laugh["ap"]
+
+    # ── Síntesis WORLD ───────────────────────────────────────────────────────
+    y_out = pw.synthesize(f0_out, sp_out, ap_out, WORLD_SR).astype(np.float32)
+
+    # Normalización suave
+    peak = float(np.max(np.abs(y_out))) if len(y_out) else 0.0
+    if peak > 0:
+        y_out = (y_out / peak) * 0.92
+
+    out = io.BytesIO()
+    sf.write(out, y_out, WORLD_SR, format="WAV", subtype="PCM_16")
+    wav_bytes = out.getvalue()
+    _LAUGH_WAV_CACHE[voice_id] = wav_bytes
+    print(f"[LAUGH-DNA] Risa clonada lista para '{voice_id}' "
+          f"({len(wav_bytes)} bytes, {len(y_out)/WORLD_SR:.2f}s)", flush=True)
+    return wav_bytes
+
+
+@app.post("/laugh-clone")
+def laugh_clone():
+    """
+    Devuelve un WAV de la voz objetivo riéndose con el ADN de la risa de
+    referencia. Cuerpo: {"voice": "lolo-piper-patch"}
+    """
+    d = request.get_json(force=True) or {}
+    voice_id = (d.get("voice") or "").strip()
+    if not voice_id:
+        return jsonify({"error": "voice requerido"}), 400
+    try:
+        wav = _synthesize_cloned_laugh(voice_id)
+    except Exception as e:
+        return jsonify({"error": f"Error generando risa: {e}"}), 500
+    if not wav:
+        return jsonify({"error": f"Voz '{voice_id}' no soporta risa clonada"}), 404
+    return Response(wav, mimetype="audio/wav",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+# Pre-cargar el análisis de la risa al arrancar (en segundo plano)
+def _init_laugh_dna():
+    try:
+        _analyze_laugh_reference()
+    except Exception as e:
+        print(f"[LAUGH-DNA] Error inicial: {e}", flush=True)
+
+_threading.Thread(target=_init_laugh_dna, daemon=True).start()
+
+
 # ── Piper Patch (pitch y/o world) ─────────────────────────────────────────────
 @app.post("/piper-patch")
 def piper_patch():

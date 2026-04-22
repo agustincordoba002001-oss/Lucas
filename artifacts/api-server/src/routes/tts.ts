@@ -2,7 +2,7 @@ import { Router }               from "express";
 import { spawn, ChildProcess } from "child_process";
 import { randomUUID }          from "crypto";
 import { join }                from "path";
-import { existsSync, unlinkSync, readFileSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
 
 const ttsRouter = Router();
 
@@ -210,28 +210,36 @@ function pickVariation(tag: string): string | undefined {
   return variants[Math.floor(Math.random() * variants.length)];
 }
 
-// ── Risa real (sample del propio Lolo) ────────────────────────────────────────
+// ── Motor de risa clonada ─────────────────────────────────────────────────────
 //
 //  Cuando el texto contiene [risa], [risa-fuerte], [risita] o [carcajada]
-//  inyectamos el WAV real de su risa, en vez de "jajaja" sintetizado.
+//  pedimos a tts_service /laugh-clone que sintetice la risa CON LA VOZ
+//  OBJETIVO. El servicio Python aplica "Laughter DNA Transfer": toma la
+//  forma F0+aperiodicidad de una risa de referencia y la ejecuta con el
+//  timbre del clon. El resultado se cachea por voz_id.
 //
-const LAUGH_BANK: Record<number, Buffer> = {};
-const LAUGH_CANDIDATES = [
-  join(__dirname, "..", "assets"),                                // dist/  → ../assets
-  join(__dirname, "..", "..", "assets"),                          // src/routes/ → ../../assets
-  "/home/runner/workspace/artifacts/api-server/assets",
-];
-for (const dir of LAUGH_CANDIDATES) {
+const LAUGH_CACHE: Record<string, Buffer> = {};
+
+async function getClonedLaugh(voiceId: string): Promise<Buffer | null> {
+  if (LAUGH_CACHE[voiceId]) return LAUGH_CACHE[voiceId];
   try {
-    LAUGH_BANK[16000] = readFileSync(join(dir, "laugh_16k.wav"));
-    LAUGH_BANK[22050] = readFileSync(join(dir, "laugh_22k.wav"));
-    LAUGH_BANK[24000] = readFileSync(join(dir, "laugh_24k.wav"));
-    console.log("[TTS] Banco de risa real cargado desde", dir, "(", Object.keys(LAUGH_BANK).join(", "), "Hz )");
-    break;
-  } catch { /* probar siguiente */ }
-}
-if (Object.keys(LAUGH_BANK).length === 0) {
-  console.warn("[TTS] ⚠ No se encontró banco de risa real (assets/laugh_*.wav)");
+    const upstream = await fetch(`${TTS_SERVICE}/laugh-clone`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ voice: voiceId }),
+    });
+    if (!upstream.ok) {
+      console.warn(`[TTS] /laugh-clone para '${voiceId}' devolvió ${upstream.status}`);
+      return null;
+    }
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    LAUGH_CACHE[voiceId] = buf;
+    console.log(`[TTS] Risa clonada cacheada para '${voiceId}' (${buf.length} bytes)`);
+    return buf;
+  } catch (e) {
+    console.warn(`[TTS] Error pidiendo risa clonada: ${(e as Error).message}`);
+    return null;
+  }
 }
 
 type WavFmt = { sampleRate: number; channels: number; bitsPerSample: number; dataOffset: number };
@@ -259,17 +267,51 @@ function parseWavHeader(buf: Buffer): WavFmt | null {
   return fmt;
 }
 
-function pickLaughForRate(targetRate: number): Buffer | null {
-  if (LAUGH_BANK[targetRate]) return LAUGH_BANK[targetRate];
-  // El más cercano si no hay match exacto
-  const rates = Object.keys(LAUGH_BANK).map(Number);
-  if (rates.length === 0) return null;
-  rates.sort((a, b) => Math.abs(a - targetRate) - Math.abs(b - targetRate));
-  return LAUGH_BANK[rates[0]];
+// Re-muestrea un WAV PCM_16 mono a otro sample rate (interpolación lineal,
+// suficientemente buena para empalmar la risa con la voz).
+function resampleWavToRate(wav: Buffer, targetRate: number): Buffer | null {
+  const fmt = parseWavHeader(wav);
+  if (!fmt || fmt.bitsPerSample !== 16 || fmt.channels !== 1) return null;
+  if (fmt.sampleRate === targetRate) return wav;
+
+  const pcm = wav.slice(fmt.dataOffset);
+  const inSamples = pcm.length / 2;
+  const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.length);
+  const ratio = fmt.sampleRate / targetRate;
+  const outSamples = Math.floor(inSamples / ratio);
+  const outPcm = Buffer.alloc(outSamples * 2);
+  for (let i = 0; i < outSamples; i++) {
+    const src = i * ratio;
+    const i0  = Math.floor(src);
+    const i1  = Math.min(i0 + 1, inSamples - 1);
+    const frac = src - i0;
+    const s0 = view.getInt16(i0 * 2, true);
+    const s1 = view.getInt16(i1 * 2, true);
+    const v  = Math.max(-32768, Math.min(32767, Math.round(s0 + (s1 - s0) * frac)));
+    outPcm.writeInt16LE(v, i * 2);
+  }
+  // Re-empaqueta como WAV con header del nuevo SR
+  const byteRate   = targetRate * 2;
+  const blockAlign = 2;
+  const out = Buffer.alloc(44 + outPcm.length);
+  out.write("RIFF", 0);
+  out.writeUInt32LE(36 + outPcm.length, 4);
+  out.write("WAVE", 8);
+  out.write("fmt ", 12);
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20);
+  out.writeUInt16LE(1, 22);
+  out.writeUInt32LE(targetRate, 24);
+  out.writeUInt32LE(byteRate, 28);
+  out.writeUInt16LE(blockAlign, 32);
+  out.writeUInt16LE(16, 34);
+  out.write("data", 36);
+  out.writeUInt32LE(outPcm.length, 40);
+  outPcm.copy(out, 44);
+  return out;
 }
 
-// Inyecta los WAV de risa real en los huecos marcados con \x00LAUGH\x00 dentro
-// del texto procesado, devolviendo segmentos {kind:"text"|"laugh", value}
+// Segmentos: trozos de texto intercalados con marcas de risa
 type Seg = { kind: "text"; value: string } | { kind: "laugh" };
 
 function splitLaughSegments(text: string): Seg[] {
@@ -398,13 +440,18 @@ ttsRouter.post("/tts/generate", async (req, res) => {
   // la expansión clásica sobre el texto completo.
   const text = expandExpressiveTags(texto.trim());
 
-  // Helper: convierte segmentos a buffers WAV intercalando la risa real.
-  // El sample rate de la risa se elige según el primer chunk de TTS.
+  // Helper: genera audio de los segmentos. La risa la pide a tts_service
+  // /laugh-clone (sintetizada con la voz objetivo, no audio de la fuente).
+  // El sample rate de la risa se ajusta al de la voz para que pegue limpio.
   async function buildWavWithLaughs(genText: (chunk: string) => Promise<Buffer>): Promise<Buffer> {
     const parts: Buffer[] = [];
     let firstFmt: WavFmt | null = null;
 
-    // Generar primero un chunk real para conocer el sample rate de la voz
+    // Pedir la risa clonada en paralelo mientras se genera el TTS
+    const laughPromise: Promise<Buffer | null> = segs.some(s => s.kind === "laugh")
+      ? getClonedLaugh(voiceId)
+      : Promise.resolve(null);
+
     for (const s of segs) {
       if (s.kind === "text") {
         const chunks = splitSentences(s.value);
@@ -414,10 +461,11 @@ ttsRouter.post("/tts/generate", async (req, res) => {
           parts.push(audio);
         }
       } else {
-        // Risa: intentamos elegir el WAV al sample rate de la voz
-        const rate  = firstFmt?.sampleRate ?? 22050;
-        const laugh = pickLaughForRate(rate);
-        if (laugh) parts.push(laugh);
+        const laugh = await laughPromise;
+        if (!laugh) continue;
+        const targetRate = firstFmt?.sampleRate ?? 22050;
+        const adapted = resampleWavToRate(laugh, targetRate) ?? laugh;
+        parts.push(adapted);
       }
     }
     return concatWavWithLaughs(parts);
