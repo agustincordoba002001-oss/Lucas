@@ -153,23 +153,63 @@ ttsRouter.get("/tts/voices", (_req, res) => {
 //  El usuario escribe [risa], [suspiro], etc. y el motor las traduce a
 //  vocalizaciones que el clonador XTTS puede pronunciar manteniendo el timbre.
 //
-const EXPRESSIVE_TAGS: Record<string, string> = {
-  "risa":         "ja, ja, ja, ja, ja!",
-  "risa-fuerte":  "JA! JA! JA! JA! JA!",
-  "risita":       "je, je, je.",
-  "carcajada":    "ja, ja, ja, ja, ja, ja, ja, ja!",
-  "suspiro":      "aaaaah...",
-  "suspiro-largo":"aaaaaaaaaah...",
-  "duda":         "eeeeeh...",
-  "mmm":          "mmmmm.",
-  "ah":           "ah!",
-  "uf":           "uuuuf.",
-  "carraspeo":    "ejem, ejem.",
-  "asombro":      "oooooh!",
-  "tos":          "ejem, ejem, ejem.",
-  "beso":         "muá!",
-  "llanto":       "buuuaaa, buuuaaa...",
+const EXPRESSIVE_TAGS: Record<string, string[]> = {
+  "risa": [
+    "jajaja, jaja, ja!",
+    "ja, ja, ja, ja, ja!",
+    "ajajaja, ja!",
+    "jajaja, jaja...",
+    "jaja, ja ja, jaja!",
+  ],
+  "risa-fuerte": [
+    "JAJAJA! JAJA! JA, JA, JA!",
+    "AJAJAJA! AJAJA! JA!",
+    "JAJAJAJA, JAJAJA, JA!",
+  ],
+  "risita": [
+    "je, je, je.",
+    "jeje, je.",
+    "ji, ji, ji.",
+    "jejeje...",
+  ],
+  "carcajada": [
+    "jajajaja, jajaja, jaja, ja, ja!",
+    "ajajajajaja, jajaja, ja, ja!",
+    "jajajajajaja, jajaja, ja!",
+    "ja ja ja ja ja, ja ja, ja, ja!",
+  ],
+  "suspiro": [
+    "aaaaah...",
+    "aaay...",
+    "uuuuh, ah...",
+    "aaah, aah...",
+  ],
+  "suspiro-largo": [
+    "aaaaaaaaaah...",
+    "uuuuuuuuuf, aaaaah...",
+    "aaaaaay, aaaaah...",
+  ],
+  "duda": [
+    "eeeeeh...",
+    "eeem...",
+    "eh, este...",
+    "eeeh, mmm...",
+  ],
+  "mmm": ["mmmmm.", "hmmm.", "mmm, mmm."],
+  "ah":  ["ah!", "ah, ah!", "aaah!"],
+  "uf":  ["uuuuf.", "uf, uf.", "uuuuuf!"],
+  "carraspeo": ["ejem, ejem.", "ejem!", "ejem, ejem, ejem."],
+  "asombro":   ["oooooh!", "oh, oh, oh!", "uooooh!"],
+  "tos":       ["ejem! ejem!", "ejem, ejem, ejem!", "ejem, ¡ejem!"],
+  "beso":      ["muá!", "muá, muá!", "mmmuá!"],
+  "llanto":    ["buuuaaa, buuuaaa...", "uaaaa, uaaaa...", "buuu, buuu, aaa..."],
 };
+
+function pickVariation(tag: string): string | undefined {
+  const variants = EXPRESSIVE_TAGS[tag];
+  if (!variants || variants.length === 0) return undefined;
+  return variants[Math.floor(Math.random() * variants.length)];
+}
 
 function expandExpressiveTags(text: string): string {
   let out = text.replace(/\[pausa(?:=(\d+))?\]/gi, (_m, n) => {
@@ -178,8 +218,8 @@ function expandExpressiveTags(text: string): string {
   });
   out = out.replace(/\[susurro\]([\s\S]*?)\[\/susurro\]/gi, (_m, inner: string) => `... ${inner.trim().toLowerCase()} ...`);
   out = out.replace(/\[([a-záéíóúüñ-]+)\]/gi, (full, tag: string) => {
-    const key = tag.toLowerCase();
-    return EXPRESSIVE_TAGS[key] !== undefined ? ` ${EXPRESSIVE_TAGS[key]} ` : full;
+    const v = pickVariation(tag.toLowerCase());
+    return v !== undefined ? ` ${v} ` : full;
   });
   return out.replace(/\s+/g, " ").trim();
 }
