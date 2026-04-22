@@ -148,6 +148,42 @@ ttsRouter.get("/tts/voices", (_req, res) => {
   });
 });
 
+// ── Etiquetas expresivas tipo Bark ────────────────────────────────────────────
+//
+//  El usuario escribe [risa], [suspiro], etc. y el motor las traduce a
+//  vocalizaciones que el clonador XTTS puede pronunciar manteniendo el timbre.
+//
+const EXPRESSIVE_TAGS: Record<string, string> = {
+  "risa":         "jajajaja",
+  "risa-fuerte":  "JAJAJAJAJA",
+  "risita":       "ji ji ji",
+  "carcajada":    "jajajajaja jajajaja",
+  "suspiro":      "ahhhh",
+  "suspiro-largo":"ahhhhhhhh",
+  "duda":         "eeehhh",
+  "mmm":          "mmmm",
+  "ah":           "ah",
+  "uf":           "ufff",
+  "carraspeo":    "ejem ejem",
+  "asombro":      "ohhh",
+  "tos":          "ejem ejem ejem",
+  "beso":         "muá",
+  "llanto":       "buuuaaa",
+};
+
+function expandExpressiveTags(text: string): string {
+  let out = text.replace(/\[pausa(?:=(\d+))?\]/gi, (_m, n) => {
+    const dots = Math.max(1, Math.min(8, Number(n) || 2));
+    return " " + ".".repeat(dots) + " ";
+  });
+  out = out.replace(/\[susurro\]([\s\S]*?)\[\/susurro\]/gi, (_m, inner: string) => `... ${inner.trim().toLowerCase()} ...`);
+  out = out.replace(/\[([a-záéíóúüñ-]+)\]/gi, (full, tag: string) => {
+    const key = tag.toLowerCase();
+    return EXPRESSIVE_TAGS[key] !== undefined ? ` ${EXPRESSIVE_TAGS[key]} ` : full;
+  });
+  return out.replace(/\s+/g, " ").trim();
+}
+
 // ── Helpers para texto ilimitado ──────────────────────────────────────────────
 const MAX_CHUNK_CHARS = 250;
 
@@ -191,7 +227,8 @@ ttsRouter.post("/tts/generate", async (req, res) => {
   }
 
   const voz  = VOICES[voiceId] ?? VOICES["gonzalo-co"];
-  const text = texto.trim();
+  const text = expandExpressiveTags(texto.trim());
+  if (!text) { res.status(400).json({ error: "El texto quedó vacío luego de expandir etiquetas" }); return; }
 
   // ── XTTS clonado — 100% en memoria ────────────────────────────────────────
   if (voz.cloned) {
