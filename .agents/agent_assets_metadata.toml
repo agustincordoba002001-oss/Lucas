@@ -576,3 +576,123 @@ id = "fgV4ZOemu9RL4ZC-QxUVR"
 uri = "file://attached_assets/laughs_v4/v4_20_locutor_radial.wav"
 type = "audio"
 title = "20 — Locutor radial"
+
+[[outputs]]
+id = "VJBaTOngcqq5NPr8uHz9b"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_01_ja_corta.wav"
+type = "audio"
+title = "01 — Ja corta (Jajaja)"
+
+[[outputs]]
+id = "Ju7c4t0IerPZT69mwPXzu"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_02_ja_media.wav"
+type = "audio"
+title = "02 — Ja media (Jajajajaja)"
+
+[[outputs]]
+id = "4zQXniXYv9N0nPLpI-nQ8"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_03_ja_larga.wav"
+type = "audio"
+title = "03 — Ja larga (Jajajajajajaja)"
+
+[[outputs]]
+id = "ifcNMCvXSXAyYJzZ-nebL"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_04_ja_separada.wav"
+type = "audio"
+title = "04 — Ja separada (Ja, ja, ja, ja, ja)"
+
+[[outputs]]
+id = "TiBl99nUfyl3Z-H7_xUg1"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_05_ja_doble.wav"
+type = "audio"
+title = "05 — Ja doble (Jajaja, jajaja)"
+
+[[outputs]]
+id = "zzBZQUDbe1JFqj7HdhvDO"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_06_ja_triple.wav"
+type = "audio"
+title = "06 — Ja triple"
+
+[[outputs]]
+id = "DZA_2YWDtUps3N5vNn1Hr"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_07_ja_pausada.wav"
+type = "audio"
+title = "07 — Ja pausada (Ja... ja... ja...)"
+
+[[outputs]]
+id = "BYGSQuNYad5Pot9antZJ6"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_08_je_risueña.wav"
+type = "audio"
+title = "08 — Jejejeje"
+
+[[outputs]]
+id = "-_06ICouDq7T4MGZANTIH"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_09_ji_sutil.wav"
+type = "audio"
+title = "09 — Jijijiji (sutil)"
+
+[[outputs]]
+id = "HQHIBPAd8e0cdl3VImxBs"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_10_jo_grave.wav"
+type = "audio"
+title = "10 — Jojojojo (grave)"
+
+[[outputs]]
+id = "FNl7L7JjIxYVGZtqScN_3"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_11_ay_ja.wav"
+type = "audio"
+title = "11 — Ay jajajaja"
+
+[[outputs]]
+id = "cYSqcxRBEFRxvnrVpshd-"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_12_no_ja.wav"
+type = "audio"
+title = "12 — No jajajaja"
+
+[[outputs]]
+id = "YfDb1m-s2BK8BzD3RMBTY"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_13_bueno_ja.wav"
+type = "audio"
+title = "13 — Bueno jajaja"
+
+[[outputs]]
+id = "IfA0YJ1RXkJbQbNneHbUK"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_14_mira_ja.wav"
+type = "audio"
+title = "14 — Mirá vos jajajaja"
+
+[[outputs]]
+id = "Pe-s72DzqcbHcHlMtN-UL"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_15_ja_intermitente.wav"
+type = "audio"
+title = "15 — Ja intermitente"
+
+[[outputs]]
+id = "ZZDIBscsKBHs5whO99ZS5"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_16_ja_extendida.wav"
+type = "audio"
+title = "16 — Ja extendida (Jaaaaaja)"
+
+[[outputs]]
+id = "hDLMiNmy5i_GlBwVR1XvE"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_17_ja_explosiva.wav"
+type = "audio"
+title = "17 — Ja explosiva (¡Ja! ¡Ja!)"
+
+[[outputs]]
+id = "G2aBgVzp4U663swWibZ6O"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_18_ja_carcajada.wav"
+type = "audio"
+title = "18 — Carcajada (Ay no jajajajaja)"
+
+[[outputs]]
+id = "UZ1fQf16vRKoC29S7ONti"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_19_jo_ja_mezcla.wav"
+type = "audio"
+title = "19 — Jojojo + jajaja"
+
+[[outputs]]
+id = "tJIuMpq__mijr0KFUkS6q"
+uri = "file://attached_assets/laughs_xtts_darwin/xtts_20_ja_natural.wav"
+type = "audio"
+title = "20 — Natural (Jajajaja, ay jajaja)"
