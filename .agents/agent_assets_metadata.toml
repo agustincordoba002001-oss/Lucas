@@ -894,3 +894,63 @@ id = "JOQal3t6dsvFdTvUZspyE"
 uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__f_full_deep.wav"
 type = "audio"
 title = "WOMAN LAUGH — f_full_deep"
+
+[[outputs]]
+id = "9AmFJ-HiRPW4vuFKycRQS"
+uri = "file://attached_assets/laughs_xtts_clone/dual__funny_ja3_T05.wav"
+type = "audio"
+title = "FUNNY — jajajaja (T 0.5)"
+
+[[outputs]]
+id = "eQ6Ow5EpcwznZvIPDCjCs"
+uri = "file://attached_assets/laughs_xtts_clone/dual__funny_ja3_T08.wav"
+type = "audio"
+title = "FUNNY — jajajaja (T 0.8)"
+
+[[outputs]]
+id = "lkTAlbi_NpTxEDF-yNI7J"
+uri = "file://attached_assets/laughs_xtts_clone/dual__funny_jalong_T07.wav"
+type = "audio"
+title = "FUNNY — jajajajajaja largo"
+
+[[outputs]]
+id = "hGkP6oZ_3ZGqwVp4NVbQX"
+uri = "file://attached_assets/laughs_xtts_clone/dual__funny_ay_T07.wav"
+type = "audio"
+title = "FUNNY — 'ay no, jajajaja'"
+
+[[outputs]]
+id = "_s7oskFtX7GhEugvvZ_At"
+uri = "file://attached_assets/laughs_xtts_clone/dual__deep_ja3_T05.wav"
+type = "audio"
+title = "DEEP — jajajaja (T 0.5)"
+
+[[outputs]]
+id = "ijoj1WqOfNNh-jJMJUTEE"
+uri = "file://attached_assets/laughs_xtts_clone/dual__deep_ja3_T08.wav"
+type = "audio"
+title = "DEEP — jajajaja (T 0.8)"
+
+[[outputs]]
+id = "VrA_Z8JOKxUdghumdf509"
+uri = "file://attached_assets/laughs_xtts_clone/dual__deep_jalong_T07.wav"
+type = "audio"
+title = "DEEP — jajajajajaja largo"
+
+[[outputs]]
+id = "3Kauy_OX2FCHwrb7QurA4"
+uri = "file://attached_assets/laughs_xtts_clone/dual__deep_jasep_T05.wav"
+type = "audio"
+title = "DEEP — 'ja, ja, ja, ja, ja'"
+
+[[outputs]]
+id = "KK3vV0lX-4EpBaO1V_VfX"
+uri = "file://attached_assets/laughs_xtts_clone/dual__woman_ja3_T05.wav"
+type = "audio"
+title = "WOMAN — jajajaja"
+
+[[outputs]]
+id = "7A-qM33UUCoS5SyW-WbUa"
+uri = "file://attached_assets/laughs_xtts_clone/dual__woman_jalong_T07.wav"
+type = "audio"
+title = "WOMAN — jajajajajaja largo"

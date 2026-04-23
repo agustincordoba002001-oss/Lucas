@@ -23,6 +23,7 @@ let daemonBuf                   = Buffer.alloc(0);
 type QueueItem = {
   texto: string;
   refAudio: string;
+  extra?: Record<string, unknown>;
   resolve: (b: Buffer) => void;
   reject:  (e: Error)  => void;
 };
@@ -35,7 +36,8 @@ function processNextInQueue() {
   const next = requestQueue.shift();
   if (!next) return;
   activePendingReq = { resolve: next.resolve, reject: next.reject };
-  daemon!.stdin!.write(JSON.stringify({ texto: next.texto, ref_audio: next.refAudio }) + "\n");
+  const payload: Record<string, unknown> = { texto: next.texto, ref_audio: next.refAudio, ...(next.extra || {}) };
+  daemon!.stdin!.write(JSON.stringify(payload) + "\n");
 }
 
 function startDaemon() {
@@ -95,15 +97,40 @@ function startDaemon() {
   });
 }
 
-function askDaemon(texto: string, refAudio: string): Promise<Buffer> {
+function askDaemon(texto: string, refAudio: string, extra?: Record<string, unknown>): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (!daemon || !daemonReady) {
       return reject(new Error("Daemon no disponible aún, intentá en unos segundos"));
     }
-    requestQueue.push({ texto, refAudio, resolve, reject });
+    requestQueue.push({ texto, refAudio, extra, resolve, reject });
     processNextInQueue();
   });
 }
+
+ttsRouter.post("/tts/clone-laugh", async (req, res) => {
+  const {
+    texto, ref_audio_gpt, ref_audio_spk,
+    temperature = 0.7, top_k = 50, top_p = 0.85, repetition_penalty = 2.0,
+    speed = 1.0, gpt_cond_len = 6, max_ref_length = 30,
+  } = (req.body || {}) as Record<string, unknown>;
+  if (typeof texto !== "string" || !texto.trim()) {
+    res.status(400).json({ error: "texto requerido" }); return;
+  }
+  if (typeof ref_audio_gpt !== "string" || typeof ref_audio_spk !== "string") {
+    res.status(400).json({ error: "ref_audio_gpt y ref_audio_spk requeridos" }); return;
+  }
+  try {
+    const wav = await askDaemon(texto, "", {
+      ref_audio_gpt, ref_audio_spk,
+      temperature, top_k, top_p, repetition_penalty, speed,
+      gpt_cond_len, max_ref_length,
+    });
+    res.setHeader("Content-Type", "audio/wav");
+    res.send(wav);
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
+});
 
 startDaemon();
 
