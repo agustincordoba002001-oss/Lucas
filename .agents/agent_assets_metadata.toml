@@ -762,3 +762,27 @@ id = "o1OkOBOcKHsUnmXqfjncZ"
 uri = "file://attached_assets/laughs_freevc_funny/funny_darwin_6s.wav"
 type = "audio"
 title = "Darwin (ref 6s)"
+
+[[outputs]]
+id = "fEBILphoql-3K7D6V1Aua"
+uri = "file://attached_assets/laughs_freevc_more/deep_chuckle__darwin_128s.wav"
+type = "audio"
+title = "Deep chuckle → Darwin (ref 128s)"
+
+[[outputs]]
+id = "6DQNqKjHX6cOVxptxoc5T"
+uri = "file://attached_assets/laughs_freevc_more/deep_chuckle__darwin_20s.wav"
+type = "audio"
+title = "Deep chuckle → Darwin (ref 20s)"
+
+[[outputs]]
+id = "pOeR6FbtUEVLlMgJgXAEX"
+uri = "file://attached_assets/laughs_freevc_more/woman_laugh__darwin_128s.wav"
+type = "audio"
+title = "Woman laugh → Darwin (ref 128s)"
+
+[[outputs]]
+id = "gZJ9U_XDlJXPfsUp6-WN_"
+uri = "file://attached_assets/laughs_freevc_more/woman_laugh__darwin_20s.wav"
+type = "audio"
+title = "Woman laugh → Darwin (ref 20s)"
