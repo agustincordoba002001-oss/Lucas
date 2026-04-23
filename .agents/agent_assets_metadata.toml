@@ -696,3 +696,45 @@ id = "tJIuMpq__mijr0KFUkS6q"
 uri = "file://attached_assets/laughs_xtts_darwin/xtts_20_ja_natural.wav"
 type = "audio"
 title = "20 — Natural (Jajajaja, ay jajaja)"
+
+[[outputs]]
+id = "iY-yPKA2SV65HPGgWT6J4"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_01_origfem.wav"
+type = "audio"
+title = "01 — Risa femenina original → Darwin"
+
+[[outputs]]
+id = "UUD0BksPA9K_pyzl68r5y"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_02_src_v4_01_grave_profundo.wav"
+type = "audio"
+title = "02 — Fuente grave profundo → Darwin"
+
+[[outputs]]
+id = "AYlj6eN2lpFFrda1tC3xP"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_03_src_v4_02_grave_masculino.wav"
+type = "audio"
+title = "03 — Fuente grave masculino → Darwin"
+
+[[outputs]]
+id = "Pzhl6GSfCyjm44QPKlGee"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_04_src_v4_03_grave_natural.wav"
+type = "audio"
+title = "04 — Fuente grave natural → Darwin"
+
+[[outputs]]
+id = "U5fxaTYxC3eR8tZnkmWlU"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_05_src_v4_04_grave_suave.wav"
+type = "audio"
+title = "05 — Fuente grave suave → Darwin"
+
+[[outputs]]
+id = "lQERYD2EaVD8ukqbGGTzB"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_06_src_v4_05_medio_masculino.wav"
+type = "audio"
+title = "06 — Fuente medio masculino → Darwin"
+
+[[outputs]]
+id = "22Sfd8-JeWTaWj41G79en"
+uri = "file://attached_assets/laughs_freevc_darwin/freevc_07_src_v4_06_medio_natural.wav"
+type = "audio"
+title = "07 — Fuente medio natural → Darwin"
