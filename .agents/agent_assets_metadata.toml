@@ -786,3 +786,111 @@ id = "gZJ9U_XDlJXPfsUp6-WN_"
 uri = "file://attached_assets/laughs_freevc_more/woman_laugh__darwin_20s.wav"
 type = "audio"
 title = "Woman laugh → Darwin (ref 20s)"
+
+[[outputs]]
+id = "RdIs_VEWX0D8tCsyPny9Z"
+uri = "file://attached_assets/laughs_darwin_v2/funny__a_basic.wav"
+type = "audio"
+title = "FUNNY — a_basic"
+
+[[outputs]]
+id = "VwaCHdBg-BNppbYk9qBjJ"
+uri = "file://attached_assets/laughs_darwin_v2/funny__b_pre_shift.wav"
+type = "audio"
+title = "FUNNY — b_pre_shift"
+
+[[outputs]]
+id = "6KpSoCoSEpoZp_XnOXoOz"
+uri = "file://attached_assets/laughs_darwin_v2/funny__c_eq_match.wav"
+type = "audio"
+title = "FUNNY — c_eq_match"
+
+[[outputs]]
+id = "x_myMEbEKC6JHZ0_3pioT"
+uri = "file://attached_assets/laughs_darwin_v2/funny__d_eq_strong.wav"
+type = "audio"
+title = "FUNNY — d_eq_strong"
+
+[[outputs]]
+id = "Y6plzDnr6otXHFtFnoNIj"
+uri = "file://attached_assets/laughs_darwin_v2/funny__e_full_warm.wav"
+type = "audio"
+title = "FUNNY — e_full_warm"
+
+[[outputs]]
+id = "1j8D2g0NP37oYyAfiX_ey"
+uri = "file://attached_assets/laughs_darwin_v2/funny__f_full_deep.wav"
+type = "audio"
+title = "FUNNY — f_full_deep"
+
+[[outputs]]
+id = "c0z7ZxDlHUbzeVqUC2zD8"
+uri = "file://attached_assets/laughs_darwin_v2/deep_chuckle__a_basic.wav"
+type = "audio"
+title = "DEEP CHUCKLE — a_basic"
+
+[[outputs]]
+id = "t6H7vE8xTkpC9NxwWOkOL"
+uri = "file://attached_assets/laughs_darwin_v2/deep_chuckle__b_pre_shift.wav"
+type = "audio"
+title = "DEEP CHUCKLE — b_pre_shift"
+
+[[outputs]]
+id = "t_2iMSuXJnePpb4KFaMIB"
+uri = "file://attached_assets/laughs_darwin_v2/deep_chuckle__c_eq_match.wav"
+type = "audio"
+title = "DEEP CHUCKLE — c_eq_match"
+
+[[outputs]]
+id = "Z0bJpB7xyX_hJaDexS1-j"
+uri = "file://attached_assets/laughs_darwin_v2/deep_chuckle__d_eq_strong.wav"
+type = "audio"
+title = "DEEP CHUCKLE — d_eq_strong"
+
+[[outputs]]
+id = "J0W3FTlwwEkVh17ccdYbG"
+uri = "file://attached_assets/laughs_darwin_v2/deep_chuckle__e_full_warm.wav"
+type = "audio"
+title = "DEEP CHUCKLE — e_full_warm"
+
+[[outputs]]
+id = "5pDe1C4B8ULtz0YVOvN_J"
+uri = "file://attached_assets/laughs_darwin_v2/deep_chuckle__f_full_deep.wav"
+type = "audio"
+title = "DEEP CHUCKLE — f_full_deep"
+
+[[outputs]]
+id = "vwNhRsbfVI_g5DJgtsjOp"
+uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__a_basic.wav"
+type = "audio"
+title = "WOMAN LAUGH — a_basic"
+
+[[outputs]]
+id = "DWRk58F94tZXDvO-KhzAX"
+uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__b_pre_shift.wav"
+type = "audio"
+title = "WOMAN LAUGH — b_pre_shift"
+
+[[outputs]]
+id = "pgUdO9q_iVzt8BuQwKFCG"
+uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__c_eq_match.wav"
+type = "audio"
+title = "WOMAN LAUGH — c_eq_match"
+
+[[outputs]]
+id = "NTeDTq5ayMpP4jlp_f2-8"
+uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__d_eq_strong.wav"
+type = "audio"
+title = "WOMAN LAUGH — d_eq_strong"
+
+[[outputs]]
+id = "dlrsDgfkq_TMvYHs50QvM"
+uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__e_full_warm.wav"
+type = "audio"
+title = "WOMAN LAUGH — e_full_warm"
+
+[[outputs]]
+id = "JOQal3t6dsvFdTvUZspyE"
+uri = "file://attached_assets/laughs_darwin_v2/woman_laugh__f_full_deep.wav"
+type = "audio"
+title = "WOMAN LAUGH — f_full_deep"
