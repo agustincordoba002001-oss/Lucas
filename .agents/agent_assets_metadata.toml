@@ -738,3 +738,27 @@ id = "22Sfd8-JeWTaWj41G79en"
 uri = "file://attached_assets/laughs_freevc_darwin/freevc_07_src_v4_06_medio_natural.wav"
 type = "audio"
 title = "07 — Fuente medio natural → Darwin"
+
+[[outputs]]
+id = "8wH9dJCV1PWP-t05YBSUB"
+uri = "file://attached_assets/laughs_freevc_funny/funny_darwin_128s.wav"
+type = "audio"
+title = "Darwin (ref 128s, mejor calidad)"
+
+[[outputs]]
+id = "-nRUpAalF8n9DM8D3LJXr"
+uri = "file://attached_assets/laughs_freevc_funny/funny_darwin_20s.wav"
+type = "audio"
+title = "Darwin (ref 20s)"
+
+[[outputs]]
+id = "kB-y9kMfhzotlPxuVtsjg"
+uri = "file://attached_assets/laughs_freevc_funny/funny_darwin_9s.wav"
+type = "audio"
+title = "Darwin (ref 9s)"
+
+[[outputs]]
+id = "o1OkOBOcKHsUnmXqfjncZ"
+uri = "file://attached_assets/laughs_freevc_funny/funny_darwin_6s.wav"
+type = "audio"
+title = "Darwin (ref 6s)"
