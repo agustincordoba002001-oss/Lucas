@@ -444,6 +444,36 @@ function concatWavBuffers(bufs: Buffer[]): Buffer {
 }
 
 // ── POST /tts/generate ────────────────────────────────────────────────────────
+// ── Cache de resultados por (voiceId + texto) y dedupe de pedidos en vuelo ──
+// Hace que pedir 2 veces el mismo audio sea instantáneo, y que clicks dobles
+// no encolen más trabajo en el daemon XTTS.
+const TTS_RESULT_CACHE = new Map<string, Buffer>();
+const TTS_INFLIGHT     = new Map<string, Promise<Buffer>>();
+const TTS_CACHE_LIMIT  = 200;
+
+function ttsCacheKey(voiceId: string, texto: string): string {
+  return `${voiceId}::${texto.trim()}`;
+}
+
+function ttsCacheGet(key: string): Buffer | null {
+  const v = TTS_RESULT_CACHE.get(key);
+  if (v) {
+    // Bump LRU — borrá y volvé a setear para que quede al final
+    TTS_RESULT_CACHE.delete(key);
+    TTS_RESULT_CACHE.set(key, v);
+  }
+  return v ?? null;
+}
+
+function ttsCacheSet(key: string, buf: Buffer): void {
+  TTS_RESULT_CACHE.set(key, buf);
+  while (TTS_RESULT_CACHE.size > TTS_CACHE_LIMIT) {
+    const oldest = TTS_RESULT_CACHE.keys().next().value;
+    if (!oldest) break;
+    TTS_RESULT_CACHE.delete(oldest);
+  }
+}
+
 ttsRouter.post("/tts/generate", async (req, res) => {
   const { texto, voiceId = "gonzalo-co" } = req.body as { texto?: string; voiceId?: string };
 
@@ -452,6 +482,29 @@ ttsRouter.post("/tts/generate", async (req, res) => {
   }
 
   const voz = VOICES[voiceId] ?? VOICES["gonzalo-co"];
+
+  // 1) Cache hit instantáneo
+  const cacheKey = ttsCacheKey(voiceId, texto);
+  const cached = ttsCacheGet(cacheKey);
+  if (cached) {
+    res.setHeader("Content-Type", "audio/wav");
+    res.setHeader("X-TTS-Cache", "HIT");
+    res.send(cached);
+    return;
+  }
+  // 2) Mismo pedido ya en curso → compartí la promesa (evita encolar el daemon)
+  const inflight = TTS_INFLIGHT.get(cacheKey);
+  if (inflight) {
+    try {
+      const audio = await inflight;
+      res.setHeader("Content-Type", "audio/wav");
+      res.setHeader("X-TTS-Cache", "JOINED");
+      res.send(audio);
+    } catch (e) {
+      res.status(503).json({ error: (e as Error).message });
+    }
+    return;
+  }
 
   // Primero separamos por etiquetas de RISA real (sample del propio Lolo).
   // Cada segmento de texto se expande luego con el resto de etiquetas
@@ -500,35 +553,46 @@ ttsRouter.post("/tts/generate", async (req, res) => {
 
   // ── XTTS clonado — 100% en memoria ────────────────────────────────────────
   if (voz.cloned) {
+    const work = (async () =>
+      buildWavWithLaughs(chunk => askDaemon(chunk, voz.refAudio ?? DIEVER_REF)))();
+    TTS_INFLIGHT.set(cacheKey, work);
     try {
-      const audio = await buildWavWithLaughs(chunk => askDaemon(chunk, voz.refAudio ?? DIEVER_REF));
+      const audio = await work;
+      ttsCacheSet(cacheKey, audio);
       res.setHeader("Content-Type", "audio/wav");
       res.send(audio);
     } catch (e) {
       res.status(503).json({ error: (e as Error).message });
+    } finally {
+      TTS_INFLIGHT.delete(cacheKey);
     }
     return;
   }
 
   // ── Piper Patch — 100% en memoria ─────────────────────────────────────────
   if (voz.piperPatch) {
-    try {
-      const audio = await buildWavWithLaughs(async (chunk) => {
-        const upstream = await fetch(`${TTS_SERVICE}/piper-patch`, {
-          method:  "POST",
-          headers: { "Content-Type": "application/json" },
-          body:    JSON.stringify({ texto: chunk, voice: voz.piperPatch }),
-        });
-        if (!upstream.ok) {
-          const err = await upstream.json().catch(() => ({ error: "Error Piper Patch" })) as { error?: string };
-          throw new Error(err.error || "Error Piper Patch");
-        }
-        return Buffer.from(await upstream.arrayBuffer());
+    const work = (async () => buildWavWithLaughs(async (chunk) => {
+      const upstream = await fetch(`${TTS_SERVICE}/piper-patch`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ texto: chunk, voice: voz.piperPatch }),
       });
+      if (!upstream.ok) {
+        const err = await upstream.json().catch(() => ({ error: "Error Piper Patch" })) as { error?: string };
+        throw new Error(err.error || "Error Piper Patch");
+      }
+      return Buffer.from(await upstream.arrayBuffer());
+    }))();
+    TTS_INFLIGHT.set(cacheKey, work);
+    try {
+      const audio = await work;
+      ttsCacheSet(cacheKey, audio);
       res.setHeader("Content-Type", "audio/wav");
       res.send(audio);
     } catch (e) {
       res.status(503).json({ error: `Error Piper Patch: ${(e as Error).message}` });
+    } finally {
+      TTS_INFLIGHT.delete(cacheKey);
     }
     return;
   }
@@ -568,6 +632,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
           new Promise<null>(r => setTimeout(() => r(null), 0)),
         ]);
         if (xttsReady) {
+          ttsCacheSet(cacheKey, xttsReady);
           res.setHeader("Content-Type", "audio/wav");
           res.setHeader("X-Cache", "HIT-XTTS");
           res.send(xttsReady);
@@ -579,8 +644,10 @@ ttsRouter.post("/tts/generate", async (req, res) => {
       res.setHeader("X-Darwin-Upgrading", xttsPromise ? "true" : "false");
       res.send(edgeBuf);
 
-      // Mantener la promesa viva en background (sin hacer nada con el resultado)
-      xttsPromise?.catch(() => {});
+      // Cuando termine XTTS, guardalo en cache para que la próxima sea instantánea
+      xttsPromise?.then((xttsBuf) => {
+        if (xttsBuf) ttsCacheSet(cacheKey, xttsBuf);
+      }).catch(() => {});
     } catch (e) {
       res.status(503).json({ error: `Error Edge Darwin: ${(e as Error).message}` });
     }
