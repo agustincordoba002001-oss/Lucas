@@ -6,7 +6,7 @@ import { existsSync, unlinkSync, mkdirSync, readFileSync, writeFileSync, readdir
 
 const ttsRouter = Router();
 
-const TTS_SERVICE        = "http://127.0.0.1:5000";
+const TTS_SERVICE        = process.env["TTS_SERVICE_URL"] ?? "http://127.0.0.1:5001";
 const DIEVER_REF         = "/home/runner/workspace/diever_referencia.wav";
 const NEXUS_REF          = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
 const NEXUS_CONFIG       = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
@@ -132,7 +132,14 @@ ttsRouter.post("/tts/clone-laugh", async (req, res) => {
   }
 });
 
-startDaemon();
+// El daemon XTTS depende del paquete Coqui `TTS` (~varios GB) que no se instala
+// por defecto para no consumir disco/créditos. Solo se arranca si está habilitado
+// explícitamente con XTTS_DAEMON_ENABLED=1.
+if (process.env["XTTS_DAEMON_ENABLED"] === "1") {
+  startDaemon();
+} else {
+  console.log("[TTS] Daemon XTTS deshabilitado (define XTTS_DAEMON_ENABLED=1 para activarlo).");
+}
 
 // ── Voces ─────────────────────────────────────────────────────────────────────
 const VOICES: Record<string, {

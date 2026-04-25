@@ -6,8 +6,8 @@ const commentsRouter = Router();
 
 const DB_PATH        = "/home/runner/workspace/comments.db";
 const JSON_PATH      = "/home/runner/workspace/comments.json";
-const TTS_API        = "http://127.0.0.1:8080/api/tts/generate";
-const TTS_SERVICE    = "http://127.0.0.1:5000";
+const TTS_API        = process.env["TTS_API_URL"] ?? "http://127.0.0.1:5000/api/tts/generate";
+const TTS_SERVICE    = process.env["TTS_SERVICE_URL"] ?? "http://127.0.0.1:5001";
 
 type AudioMap = Record<string, { ct: string; b64: string }>;
 type PhotonMemoryAudio = { ct: string; buf: Buffer; bytes: number; touched: number };

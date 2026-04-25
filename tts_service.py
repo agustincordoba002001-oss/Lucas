@@ -1200,4 +1200,5 @@ def prosody_synthesize():
 
 if __name__ == "__main__":
     print("[TTS-SERVICE] edge_tts + Piper + WORLD + Prosody Fingerprint listos ✓", flush=True)
-    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
+    _tts_port = int(os.environ.get("TTS_SERVICE_PORT", "5001"))
+    app.run(host="0.0.0.0", port=_tts_port, debug=False, threaded=True)

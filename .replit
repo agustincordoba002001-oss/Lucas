@@ -31,11 +31,11 @@ name = "TTS Service"
 author = "agent"
 
 [workflows.workflow.metadata]
-outputType = "console"
+outputType = "webview"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 tts_service.py"
+args = "bash scripts/start-dev.sh"
 waitForPort = 5000
 
 [agent]

@@ -1,5 +1,23 @@
 # Workspace
 
+## ⚡ Setup rápido tras re-importar (ahorra créditos)
+
+El proyecto ya viene con TODO listo. Para correrlo solo hay que:
+
+1. Asegurar dependencias instaladas (uv y pnpm) — se hace automáticamente la primera vez.
+2. Iniciar el workflow `TTS Service` que ejecuta `bash scripts/start-dev.sh`.
+
+**El agente NO necesita** rebuildear el frontend ni el api-server: los `dist/` están commiteados (`artifacts/lolo-cd/dist/public/` y `artifacts/api-server/dist/`). Las únicas dependencias que hay que instalar son:
+
+- Python (vía `uv`/pyproject.toml): `flask`, `librosa`, `soundfile`, `numpy`, `edge-tts`, `piper-tts`, `pyworld`.
+- Node (vía `pnpm install`): listadas en cada `package.json` del workspace.
+
+`scripts/start-dev.sh` arranca:
+- Python TTS engine en `TTS_SERVICE_PORT` (5001 por defecto) en background.
+- Express API server + UI React servida en estático en `PORT` (5000) — éste es el puerto que ve el usuario en el preview.
+
+Si los `dist/` faltan por algún motivo, `start-dev.sh` y `scripts/post-merge.sh` los reconstruyen automáticamente.
+
 ## Overview
 
 pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.

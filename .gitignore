@@ -8,6 +8,13 @@ out-tsc
 .expo
 .expo-shared
 
+# Excepciones: se commitea el build precompilado del frontend y del api-server
+# para que tras una reimportación no haya que reconstruir nada (ahorra créditos).
+!artifacts/lolo-cd/dist/
+!artifacts/lolo-cd/dist/**
+!artifacts/api-server/dist/
+!artifacts/api-server/dist/**
+
 # dependencies
 node_modules
 
