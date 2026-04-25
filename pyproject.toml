@@ -14,6 +14,10 @@ dependencies = [
     "torch>=2.11.0",
     "torchaudio>=2.11.0",
     "django-tts>=0.3.1",
+    "flask-sqlalchemy>=3.1.1",
+    "psycopg2-binary>=2.9.12",
+    "email-validator>=2.3.0",
+    "gunicorn>=25.3.0",
 ]
 
 [[tool.uv.index]]

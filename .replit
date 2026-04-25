@@ -9,6 +9,7 @@ id = "artifacts/mockup-sandbox"
 [deployment]
 router = "application"
 deploymentTarget = "autoscale"
+run = ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -39,7 +40,7 @@ args = "bash scripts/start-dev.sh"
 waitForPort = 5000
 
 [agent]
-stack = "BEST_EFFORT_FALLBACK"
+stack = "FLASK_VANILLA_JS"
 expertMode = true
 
 [postMerge]
@@ -48,4 +49,4 @@ timeoutMs = 20000
 
 [nix]
 channel = "stable-25_05"
-packages = ["ffmpeg-full", "libsndfile"]
+packages = ["ffmpeg-full", "libsndfile", "openssl", "pkg-config", "postgresql"]
