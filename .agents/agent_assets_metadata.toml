@@ -1002,3 +1002,33 @@ id = "zbemu9QnH5rBwjdY10_uc"
 uri = "file://exports/darwin_laughs_real/04_otra_huella.wav"
 type = "audio"
 title = "Darwin (XTTS real) · huella anterior (comparación)"
+
+[[outputs]]
+id = "O5fFAVbO0LmVMsjx8-YcL"
+uri = "file://exports/darwin_laughs_v2/01_natural.wav"
+type = "audio"
+title = "Darwin v2 · natural"
+
+[[outputs]]
+id = "xZopqNIP6h4q1vuvsgmCN"
+uri = "file://exports/darwin_laughs_v2/02_grave_expresivo.wav"
+type = "audio"
+title = "Darwin v2 · grave + expresivo"
+
+[[outputs]]
+id = "QxaNJJbC0ruZa_kOw04hs"
+uri = "file://exports/darwin_laughs_v2/03_respirado.wav"
+type = "audio"
+title = "Darwin v2 · respirado"
+
+[[outputs]]
+id = "SeDaIKABz536wGK0O5DmH"
+uri = "file://exports/darwin_laughs_v2/04_risita_corta.wav"
+type = "audio"
+title = "Darwin v2 · risita corta pícara"
+
+[[outputs]]
+id = "y0_Y5Ga7CVpGnOCKVGdZI"
+uri = "file://exports/darwin_laughs_v2/05_limpia.wav"
+type = "audio"
+title = "Darwin v2 · limpia (timbre puro)"

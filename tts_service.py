@@ -717,113 +717,179 @@ def _build_voice_vq_bank(voice_id: str):
     return bank
 
 
+# ── Cache de "Darwin diciendo ja je ji jo…" analizado con WORLD ──────────────
+# Clave: voice_id → dict con f0/sp/ap a 16 kHz. Esto se construye UNA vez por
+# voz pidiéndole un audio real al api-server (XTTS) y guardando los frames
+# WORLD para usar como timbre en cualquier risa.
+_VOICE_LAUGH_FRAMES: dict[str, dict] = {}
+
+_LAUGH_SYLLABLE_TEXT = "Ja ja ja je je ji ji jo jo, ja je ji jo."
+
+
+def _build_voice_laugh_frames(voice_id: str) -> dict | None:
+    """
+    Pide al api-server un WAV REAL del clon (XTTS) diciendo sílabas de risa,
+    lo analiza con WORLD y devuelve {f0, sp, ap, sr_native}. Cacheado por voz.
+    Estos frames son la "materia prima" del timbre — todos sus formantes son
+    reales de la voz objetivo.
+    """
+    if voice_id in _VOICE_LAUGH_FRAMES:
+        return _VOICE_LAUGH_FRAMES[voice_id]
+
+    print(f"[LAUGH-MORPH] Pidiendo sílabas de risa con XTTS real para "
+          f"'{voice_id}'…", flush=True)
+    wav_bytes = _fetch_clone_audio_from_api(voice_id, _LAUGH_SYLLABLE_TEXT,
+                                            timeout=120.0)
+    if not wav_bytes:
+        print(f"[LAUGH-MORPH] No pude obtener audio real de '{voice_id}'",
+              flush=True)
+        return None
+
+    y, sr = sf.read(io.BytesIO(wav_bytes), dtype="float32", always_2d=False)
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+    sr_native = int(sr)
+    if sr != WORLD_SR:
+        y = librosa.resample(y, orig_sr=sr, target_sr=WORLD_SR)
+    # Recortá silencios al inicio/fin para que cada frame importe
+    try:
+        y, _ = librosa.effects.trim(y, top_db=35)
+    except Exception:
+        pass
+
+    y64 = y.astype(np.float64)
+    f0, _t = pw.dio(y64, WORLD_SR)
+    f0     = pw.stonemask(y64, f0, _t, WORLD_SR)
+    sp     = pw.cheaptrick(y64, f0, _t, WORLD_SR)
+    ap     = pw.d4c(y64, f0, _t, WORLD_SR)
+    voiced = f0 > 0
+    if not voiced.any():
+        print(f"[LAUGH-MORPH] Sin frames sonoros en '{voice_id}'", flush=True)
+        return None
+
+    feats = {
+        "f0": f0, "sp": sp, "ap": ap,
+        "f0_med": float(np.median(f0[voiced])),
+        "n_frames": int(sp.shape[0]),
+        "sr_native": sr_native,
+    }
+    _VOICE_LAUGH_FRAMES[voice_id] = feats
+    print(f"[LAUGH-MORPH] '{voice_id}' → {feats['n_frames']} frames, "
+          f"f0_med={feats['f0_med']:.1f} Hz ✓", flush=True)
+    return feats
+
+
 def _synthesize_cloned_laugh(voice_id: str, params: dict | None = None) -> bytes | None:
     """
-    Risa con timbre 100% del banco VQ + dinámica de risa humana real.
-    Parámetros opcionales (para generar variantes A/B):
-      • f0_shift_semis  (-6…+3)  — graves/agudos
+    MOTOR v2 — morph de F0+AP de una risa humana sobre frames REALES de la voz.
+
+    Pipeline:
+      1) XTTS sintetiza al clon (Darwin/etc) diciendo "ja je ji jo…" → WORLD
+      2) WORLD analiza la risa de referencia (sólo F0 + AP nos importan)
+      3) Mapeamos linealmente N→M frames manteniendo los formantes del clon
+      4) Reemplazamos F0 por la curva de la risa (escalada al rango del clon)
+      5) Mezclamos AP hacia la risa (lo "respirado")
+      6) WORLD resintetiza → la voz dice exactamente sus formantes pero
+         siguiendo la melodía y el aire de la risa humana.
+
+    Parámetros:
+      • f0_shift_semis  (-6…+3)  — graves/agudos vs el medio del clon
       • f0_var_scale    (0.5…2.5) — chato vs muy expresivo
-      • ap_mix          (0.0…1.0) — 1=todo aire de la risa, 0=todo voz limpia
-      • speed           (0.7…1.4) — más lento/rápido
-      • jitter_semis    (0…1.5)   — vibrato/temblor humano
-      • frames_limit    (int)     — risita corta (limita a N frames)
+      • ap_mix          (0.0…1.0) — 1=todo aire de la risa, 0=voz limpia
+      • speed           (0.7…1.4) — time-stretch final
+      • jitter_semis    (0…1.5)   — vibrato humano sobre la F0
+      • frames_limit    (int)     — risita corta (limita a N frames de risa)
     """
     p = params or {}
-    f0_shift_semis = float(p.get("f0_shift_semis", -1.0))
-    f0_var_scale   = float(p.get("f0_var_scale", 1.4))
-    ap_mix         = float(np.clip(p.get("ap_mix", 0.7), 0.0, 1.0))
+    f0_shift_semis = float(p.get("f0_shift_semis", -2.0))
+    f0_var_scale   = float(p.get("f0_var_scale", 1.0))
+    ap_mix         = float(np.clip(p.get("ap_mix", 0.55), 0.0, 1.0))
     speed          = float(np.clip(p.get("speed", 1.0), 0.7, 1.4))
     jitter_semis   = float(np.clip(p.get("jitter_semis", 0.0), 0.0, 1.5))
     frames_limit   = int(p.get("frames_limit", 0))
     laugh_ref      = (p.get("laugh_ref") or _DEFAULT_LAUGH_REF).strip()
 
-    cache_key = (voice_id, laugh_ref, f0_shift_semis, f0_var_scale, ap_mix,
-                 speed, jitter_semis, frames_limit)
+    cache_key = ("v2", voice_id, laugh_ref, f0_shift_semis, f0_var_scale,
+                 ap_mix, speed, jitter_semis, frames_limit)
     if cache_key in _LAUGH_WAV_CACHE:
         return _LAUGH_WAV_CACHE[cache_key]
 
     laugh = _analyze_laugh_world(laugh_ref)
     if laugh is None:
         return None
-    bank = _build_voice_vq_bank(voice_id)
-    if bank is None:
+    voice = _build_voice_laugh_frames(voice_id)
+    if voice is None:
         return None
 
     f0_l = laugh["f0"].copy()
-    sp_l = laugh["sp"]
     ap_l = laugh["ap"]
-
-    # Limitar largo si es una "risita"
     if frames_limit > 0 and frames_limit < len(f0_l):
         f0_l = f0_l[:frames_limit]
-        sp_l = sp_l[:frames_limit]
         ap_l = ap_l[:frames_limit]
-    n_frames = sp_l.shape[0]
+    M = len(f0_l)
 
-    # ── 1) VQ espectral: cada frame → frame REAL del banco de la voz ────────
-    log_sp_l = np.log(sp_l + 1e-10).astype(np.float32)
-    refs     = bank["log_sp"]
-    ref_n    = bank["norms"]
-    src_n    = np.sum(log_sp_l ** 2, axis=1)
-    dot      = log_sp_l @ refs.T
-    dists    = src_n[:, None] + ref_n[None] - 2.0 * dot
-    nearest  = np.argmin(dists, axis=1)
-    sp_out   = np.exp(refs[nearest]).astype(np.float64)
+    # ── 1) Time-map: frames del clon estirados/comprimidos a M ──────────────
+    f0_d, sp_d, ap_d = voice["f0"], voice["sp"], voice["ap"]
+    N = voice["n_frames"]
+    src_idx = np.linspace(0, N - 1, M).astype(np.int64)
+    sp_m = sp_d[src_idx].astype(np.float64)
+    ap_d_m = ap_d[src_idx].astype(np.float64)
 
-    # ── 2) F0: forma de la risa transferida al rango de la voz ──────────────
-    voiced = f0_l > 0
-    f0_out = f0_l.copy()
-    if voiced.any():
-        log_f0_l   = np.log(np.maximum(f0_l[voiced], 1.0))
-        l_mu, l_sd = float(np.mean(log_f0_l)), float(np.std(log_f0_l)) or 0.01
-        target_mu  = bank["f0_log_mu"] + f0_shift_semis * (np.log(2) / 12.0)
-        target_sd  = bank["f0_log_sd"] * f0_var_scale
-        f0_out[voiced] = np.exp(
-            target_mu + target_sd * (log_f0_l - l_mu) / l_sd
+    # ── 2) F0 nuevo: curva de la risa, reescalada al rango del clon ─────────
+    voiced_l = f0_l > 0
+    target_med = voice["f0_med"] * (2.0 ** (f0_shift_semis / 12.0))
+    f0_new = np.zeros(M, dtype=np.float64)
+    if voiced_l.any():
+        l_log = np.log(f0_l[voiced_l])
+        l_mu  = float(np.mean(l_log))
+        l_sd  = float(np.std(l_log)) or 0.01
+        # Sólo escalamos los frames sonoros — los unvoiced quedan en 0
+        # (WORLD genera respiración a partir del AP).
+        f0_new[voiced_l] = np.exp(
+            np.log(target_med) + f0_var_scale * (l_log - l_mu)
         )
-        # Vibrato/jitter humano (microvariaciones de pitch)
         if jitter_semis > 0.01:
-            rng = np.random.default_rng(42)
-            n_v = int(np.sum(voiced))
-            wob = rng.standard_normal(n_v).cumsum()
-            wob = wob / (np.std(wob) + 1e-9) * jitter_semis
-            f0_out[voiced] = f0_out[voiced] * (2 ** (wob / 12.0))
-        f0_out[voiced] = np.clip(f0_out[voiced], 55.0, 500.0)
+            rng  = np.random.default_rng(42)
+            n_v  = int(np.sum(voiced_l))
+            wob  = rng.standard_normal(n_v).cumsum()
+            wob  = wob / (np.std(wob) + 1e-9) * jitter_semis
+            f0_new[voiced_l] *= 2.0 ** (wob / 12.0)
+        f0_new[voiced_l] = np.clip(f0_new[voiced_l], 55.0, 500.0)
 
-    # ── 3) AP: mezcla risa-real (aire) + voz (limpio) ───────────────────────
-    ap_voice = np.tile(bank["mean_ap"], (n_frames, 1))
-    ap_out   = np.clip(ap_mix * ap_l + (1.0 - ap_mix) * ap_voice, 0.0, 1.0)
+    # ── 3) AP: mezcla la respiración del clon con la de la risa ─────────────
+    ap_new = np.clip(ap_mix * ap_l.astype(np.float64) +
+                     (1.0 - ap_mix) * ap_d_m, 0.0, 1.0)
 
-    # ── 4) Síntesis WORLD ───────────────────────────────────────────────────
-    y_out = pw.synthesize(f0_out, sp_out, ap_out, WORLD_SR).astype(np.float32)
+    # ── 4) Síntesis WORLD con SP del clon (formantes intactos) ──────────────
+    y_out = pw.synthesize(f0_new, sp_m, ap_new, WORLD_SR).astype(np.float32)
 
-    # ── 5) Velocidad (time-stretch del resultado) ───────────────────────────
+    # ── 5) Time-stretch final ───────────────────────────────────────────────
     if abs(speed - 1.0) > 0.01:
         try:
             y_out = librosa.effects.time_stretch(y=y_out, rate=speed)
         except Exception:
             pass
 
-    # ── 6) Trim + resample al SR nativo de la voz ───────────────────────────
+    # ── 6) Trim + resample al SR nativo del clon (XTTS=24k) ─────────────────
     try:
-        y_out, _idx = librosa.effects.trim(y_out, top_db=35)
+        y_out, _ = librosa.effects.trim(y_out, top_db=35)
     except Exception:
         pass
-    sr_out = bank["sr_native"]
+    sr_out = voice["sr_native"]
     if sr_out != WORLD_SR:
         y_out = librosa.resample(y_out, orig_sr=WORLD_SR, target_sr=sr_out)
 
     peak = float(np.max(np.abs(y_out))) if len(y_out) else 0.0
     if peak > 0:
-        y_out = (y_out / peak) * 0.9
+        y_out = (y_out / peak) * 0.92
 
     buf = io.BytesIO()
     sf.write(buf, y_out, sr_out, format="WAV", subtype="PCM_16")
     wav_bytes = buf.getvalue()
     _LAUGH_WAV_CACHE[cache_key] = wav_bytes
-    print(f"[LAUGH-DNA] Variante '{voice_id}' shift={f0_shift_semis:+.1f} "
+    print(f"[LAUGH-MORPH] '{voice_id}'/{laugh_ref} shift={f0_shift_semis:+.1f} "
           f"var={f0_var_scale:.2f} ap={ap_mix:.2f} sp={speed:.2f} "
-          f"jit={jitter_semis:.2f} → {len(y_out)/sr_out:.2f}s", flush=True)
+          f"jit={jitter_semis:.2f} → {len(y_out)/sr_out:.2f}s ✓", flush=True)
     return wav_bytes
 
 
