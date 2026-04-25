@@ -1,8 +1,8 @@
 import { Router }               from "express";
 import { spawn, ChildProcess } from "child_process";
-import { randomUUID }          from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { join }                from "path";
-import { existsSync, unlinkSync } from "fs";
+import { existsSync, unlinkSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, utimesSync } from "fs";
 
 const ttsRouter = Router();
 
@@ -444,34 +444,63 @@ function concatWavBuffers(bufs: Buffer[]): Buffer {
 }
 
 // ── POST /tts/generate ────────────────────────────────────────────────────────
-// ── Cache de resultados por (voiceId + texto) y dedupe de pedidos en vuelo ──
-// Hace que pedir 2 veces el mismo audio sea instantáneo, y que clicks dobles
-// no encolen más trabajo en el daemon XTTS.
-const TTS_RESULT_CACHE = new Map<string, Buffer>();
+// ── Cache de resultados PERSISTENTE en disco + dedupe de pedidos en vuelo ──
+// Hace que pedir 2 veces el mismo audio sea instantáneo (incluso después de
+// reiniciar el server) y que clicks dobles no encolen al daemon XTTS.
+//
+// Layout:  /home/runner/workspace/.tts_cache/<sha1(voiceId::texto)>.wav
+const TTS_CACHE_DIR    = "/home/runner/workspace/.tts_cache";
 const TTS_INFLIGHT     = new Map<string, Promise<Buffer>>();
-const TTS_CACHE_LIMIT  = 200;
+const TTS_CACHE_LIMIT  = 500;   // archivos máx en disco
+
+try { mkdirSync(TTS_CACHE_DIR, { recursive: true }); } catch {}
 
 function ttsCacheKey(voiceId: string, texto: string): string {
   return `${voiceId}::${texto.trim()}`;
 }
 
+function ttsCacheFile(key: string): string {
+  const h = createHash("sha1").update(key).digest("hex");
+  return join(TTS_CACHE_DIR, `${h}.wav`);
+}
+
 function ttsCacheGet(key: string): Buffer | null {
-  const v = TTS_RESULT_CACHE.get(key);
-  if (v) {
-    // Bump LRU — borrá y volvé a setear para que quede al final
-    TTS_RESULT_CACHE.delete(key);
-    TTS_RESULT_CACHE.set(key, v);
-  }
-  return v ?? null;
+  const f = ttsCacheFile(key);
+  if (!existsSync(f)) return null;
+  try {
+    const buf = readFileSync(f);
+    // Bump LRU: actualizá mtime para que no sea elegible para podar
+    const now = new Date();
+    try { utimesSync(f, now, now); } catch {}
+    return buf;
+  } catch { return null; }
 }
 
 function ttsCacheSet(key: string, buf: Buffer): void {
-  TTS_RESULT_CACHE.set(key, buf);
-  while (TTS_RESULT_CACHE.size > TTS_CACHE_LIMIT) {
-    const oldest = TTS_RESULT_CACHE.keys().next().value;
-    if (!oldest) break;
-    TTS_RESULT_CACHE.delete(oldest);
+  const f = ttsCacheFile(key);
+  try {
+    writeFileSync(f, buf);
+    pruneCacheIfNeeded();
+  } catch (e) {
+    console.error("[tts-cache] no se pudo escribir", f, (e as Error).message);
   }
+}
+
+function pruneCacheIfNeeded(): void {
+  try {
+    const files = readdirSync(TTS_CACHE_DIR)
+      .filter(n => n.endsWith(".wav"))
+      .map(n => {
+        const p = join(TTS_CACHE_DIR, n);
+        return { p, mtime: statSync(p).mtimeMs };
+      });
+    if (files.length <= TTS_CACHE_LIMIT) return;
+    files.sort((a, b) => a.mtime - b.mtime); // más viejos primero
+    const toDelete = files.length - TTS_CACHE_LIMIT;
+    for (let i = 0; i < toDelete; i++) {
+      try { unlinkSync(files[i].p); } catch {}
+    }
+  } catch {}
 }
 
 ttsRouter.post("/tts/generate", async (req, res) => {
