@@ -978,3 +978,27 @@ id = "Lm1tDeRPXdComPpiIiGIJ"
 uri = "file://exports/darwin_laughs_katja/04_respirada.wav"
 type = "audio"
 title = "Darwin riendo · lenta y respirada"
+
+[[outputs]]
+id = "cbssyabuHrvvX-givY03N"
+uri = "file://exports/darwin_laughs_real/01_natural.wav"
+type = "audio"
+title = "Darwin (XTTS real) · risa natural · huella Katja"
+
+[[outputs]]
+id = "ZSQZKppoRCsd8-3QeRDhw"
+uri = "file://exports/darwin_laughs_real/02_grave_humano.wav"
+type = "audio"
+title = "Darwin (XTTS real) · grave y humano · huella Katja"
+
+[[outputs]]
+id = "MKT5sS-TrQI5VPl68kSM5"
+uri = "file://exports/darwin_laughs_real/03_risita_corta.wav"
+type = "audio"
+title = "Darwin (XTTS real) · risita corta pícara · huella Katja"
+
+[[outputs]]
+id = "zbemu9QnH5rBwjdY10_uc"
+uri = "file://exports/darwin_laughs_real/04_otra_huella.wav"
+type = "audio"
+title = "Darwin (XTTS real) · huella anterior (comparación)"

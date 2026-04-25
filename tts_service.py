@@ -3,7 +3,7 @@ Servicio TTS persistente — edge_tts + Piper + conversión de voz WORLD.
 Motor Darwin: conversión de voz frame a frame por cuantización vectorial.
 Puerto: 5000
 """
-import io, asyncio, wave, warnings, os
+import io, asyncio, wave, warnings, os, json
 warnings.filterwarnings("ignore")
 
 import edge_tts
@@ -599,43 +599,89 @@ _VQ_VOWEL_CORPUS = (
 )
 
 
+_API_SERVER_URL = os.environ.get("API_SERVER_URL", "http://127.0.0.1:8080")
+# Voces cuyo timbre real vive fuera del TTS service (XTTS u otro clon neuronal
+# servido por el api-server). Para esas, el banco VQ se construye pidiendo
+# audio REAL de esa voz al api-server, no con Piper+WORLD.
+_REAL_CLONE_VOICES = {"darwin-xtts"}
+
+
+def _fetch_clone_audio_from_api(voice_id: str, text: str,
+                                timeout: float = 60.0) -> bytes | None:
+    """Pide al api-server un WAV con el clon neuronal real de `voice_id`."""
+    import urllib.request, urllib.error
+    body = json.dumps({"texto": text, "voiceId": voice_id}).encode("utf-8")
+    req  = urllib.request.Request(
+        f"{_API_SERVER_URL}/api/tts/generate",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except Exception as e:
+        print(f"[LAUGH-DNA] No pude pedir audio real de '{voice_id}' al api-server: {e}",
+              flush=True)
+        return None
+
+
 def _build_voice_vq_bank(voice_id: str):
     """
-    Sintetiza una cadena de vocales con la voz objetivo (Piper + patch),
-    extrae los frames espectrales con WORLD y construye un banco para
-    búsqueda de vecino más cercano. CADA frame del banco es un frame REAL
-    de la voz destino (no manipulado).
+    Construye un banco de frames espectrales REALES de la voz objetivo:
+      - Para clones neuronales (XTTS): pide al api-server un WAV de la voz
+        real diciendo el corpus de vocales.
+      - Para voces Piper+patch: sintetiza el corpus con Piper y le aplica
+        el patch (WORLD o pitch) a la voz destino.
+    Cada frame del banco resultante es un frame REAL del timbre destino.
     """
     if voice_id in _VOICE_VQ_BANK:
         return _VOICE_VQ_BANK[voice_id]
 
-    cfg = _PATCHED_VOICES.get(voice_id) or _PATCHED_VOICES.get({
-        "diever":      "lolo-piper-patch",
-        "darwin-xtts": "darwin-piper-patch",
-        "nexus":       "nexus-piper-patch",
-        "nexus-ultra": "nexus-piper-patch",
-    }.get(voice_id, ""))
-    if not cfg:
-        print(f"[LAUGH-DNA] Sin pipeline piper-patch para '{voice_id}'", flush=True)
-        return None
+    patched: bytes | None = None
 
-    model = _piper.get(cfg["base"])
-    if not model:
-        return None
+    if voice_id in _REAL_CLONE_VOICES:
+        print(f"[LAUGH-DNA] Pidiendo corpus VQ con clon real al api-server "
+              f"para '{voice_id}'…", flush=True)
+        patched = _fetch_clone_audio_from_api(voice_id, _VQ_VOWEL_CORPUS)
+        if not patched:
+            print(f"[LAUGH-DNA] Fallback: usaré Piper+patch para '{voice_id}'",
+                  flush=True)
 
-    print(f"[LAUGH-DNA] Construyendo banco de frames para '{voice_id}'…", flush=True)
-    base = _wav_from_piper(model, _VQ_VOWEL_CORPUS)
-    if not base:
-        return None
-    try:
-        mode = cfg.get("mode", "pitch")
-        if mode == "world":
-            patched = _patch_world(base, cfg, voice_name=voice_id)
-        else:
-            patched = _patch_pitch(base, cfg["ref"])
-    except Exception as e:
-        print(f"[LAUGH-DNA] Error patcheando corpus VQ: {e}", flush=True)
-        return None
+    if patched is None:
+        cfg = _PATCHED_VOICES.get(voice_id) or _PATCHED_VOICES.get({
+            "diever":      "lolo-piper-patch",
+            "darwin-xtts": "darwin-piper-patch",
+            "nexus":       "nexus-piper-patch",
+            "nexus-ultra": "nexus-piper-patch",
+        }.get(voice_id, ""))
+        if not cfg:
+            print(f"[LAUGH-DNA] Sin pipeline piper-patch para '{voice_id}'",
+                  flush=True)
+            return None
+
+        model = _piper.get(cfg["base"])
+        if not model:
+            return None
+
+        print(f"[LAUGH-DNA] Construyendo banco de frames para '{voice_id}' "
+              f"(Piper+patch)…", flush=True)
+        base = _wav_from_piper(model, _VQ_VOWEL_CORPUS)
+        if not base:
+            return None
+        try:
+            mode = cfg.get("mode", "pitch")
+            if mode == "world":
+                patched = _patch_world(base, cfg, voice_name=voice_id)
+            else:
+                ref_paths = cfg.get("refs") or ([cfg["ref"]] if "ref" in cfg else [])
+                primary_ref = next((p for p in ref_paths if os.path.exists(p)), None)
+                if not primary_ref:
+                    return None
+                patched = _patch_pitch(base, primary_ref)
+        except Exception as e:
+            print(f"[LAUGH-DNA] Error patcheando corpus VQ: {e}", flush=True)
+            return None
 
     y, sr = sf.read(io.BytesIO(patched), dtype="float32", always_2d=False)
     if y.ndim > 1:
