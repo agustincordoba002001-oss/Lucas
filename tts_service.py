@@ -815,7 +815,10 @@ def piper_patch():
     cfg = _PATCHED_VOICES.get(voice)
     if not cfg:
         return jsonify({"error": f"Parche Piper '{voice}' no disponible"}), 404
-    if not os.path.exists(cfg["ref"]):
+
+    ref_paths = cfg.get("refs") or ([cfg["ref"]] if "ref" in cfg else [])
+    primary_ref = next((p for p in ref_paths if os.path.exists(p)), None)
+    if not primary_ref:
         return jsonify({"error": "Audio de referencia no disponible"}), 404
 
     model = _piper.get(cfg["base"])
@@ -831,7 +834,7 @@ def piper_patch():
         if mode == "world":
             patched = _patch_world(audio, cfg, voice_name=voice)
         else:
-            patched = _patch_pitch(audio, cfg["ref"])
+            patched = _patch_pitch(audio, primary_ref)
     except Exception as e:
         return jsonify({"error": f"Error aplicando parche: {e}"}), 500
 
