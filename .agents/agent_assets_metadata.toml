@@ -954,3 +954,27 @@ id = "7A-qM33UUCoS5SyW-WbUa"
 uri = "file://attached_assets/laughs_xtts_clone/dual__woman_jalong_T07.wav"
 type = "audio"
 title = "WOMAN — jajajajajaja largo"
+
+[[outputs]]
+id = "ofwNBP9A3QSDWqBwn8B6B"
+uri = "file://exports/darwin_laughs_katja/01_natural.wav"
+type = "audio"
+title = "Darwin riendo · natural"
+
+[[outputs]]
+id = "MmTPzLW9KJ-amrwnR6m3Z"
+uri = "file://exports/darwin_laughs_katja/02_grave_humano.wav"
+type = "audio"
+title = "Darwin riendo · grave y humano"
+
+[[outputs]]
+id = "hNE-NSYwguYysWnBkZzRn"
+uri = "file://exports/darwin_laughs_katja/03_risita_picara.wav"
+type = "audio"
+title = "Darwin riendo · risita corta pícara"
+
+[[outputs]]
+id = "Lm1tDeRPXdComPpiIiGIJ"
+uri = "file://exports/darwin_laughs_katja/04_respirada.wav"
+type = "audio"
+title = "Darwin riendo · lenta y respirada"

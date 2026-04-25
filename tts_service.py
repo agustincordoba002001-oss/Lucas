@@ -546,27 +546,35 @@ def piper():
 #  melódico-respiratorio" de la risa, ejecutado por el timbre del clon.
 # ══════════════════════════════════════════════════════════════════════════════
 
-LAUGH_REF_PATH = "/home/runner/workspace/attached_assets/descarga_(2)_(1)_1776888865266.wav"
+# Registro de risas de referencia. Cada una es una "huella melódica-respiratoria"
+# distinta — el timbre se reemplaza siempre por el de la voz destino, así que la
+# salida nunca contiene la voz original de la risa.
+_LAUGH_REFS = {
+    "default": "/home/runner/workspace/attached_assets/descarga_(2)_(1)_1776888865266.wav",
+    "katja":   "/home/runner/workspace/attached_assets/katjasavia-female-sensual-laughter-218077_1777148503594.mp3",
+}
+_DEFAULT_LAUGH_REF = "default"
 
-# Análisis WORLD COMPLETO de la risa de referencia: F0, SP y AP por frame.
+# Análisis WORLD COMPLETO de cada risa de referencia, cacheado por ref_id.
 # F0+AP encodean "esto suena a risa". SP se reemplazará con frames reales
-# de la voz destino (los formantes de la mina nunca llegan a la salida).
-_LAUGH_WORLD = None
+# de la voz destino (los formantes de la persona original nunca llegan a la salida).
+_LAUGH_WORLD: dict[str, dict] = {}
 # Bancos de frames espectrales por voz: {voice_id: (refs_log_sp, ref_norms, mean_ap, f0_log_mean, f0_log_std)}
 _VOICE_VQ_BANK = {}
 _LAUGH_WAV_CACHE = {}
 
 
-def _analyze_laugh_world():
+def _analyze_laugh_world(ref_id: str | None = None):
     """Analiza la risa de referencia con WORLD: F0, SP, AP por frame (a 16 kHz)."""
-    global _LAUGH_WORLD
-    if _LAUGH_WORLD is not None:
-        return _LAUGH_WORLD
-    if not os.path.exists(LAUGH_REF_PATH):
-        print(f"[LAUGH-DNA] ⚠ Referencia no encontrada: {LAUGH_REF_PATH}", flush=True)
+    ref_id = ref_id or _DEFAULT_LAUGH_REF
+    if ref_id in _LAUGH_WORLD:
+        return _LAUGH_WORLD[ref_id]
+    path = _LAUGH_REFS.get(ref_id)
+    if not path or not os.path.exists(path):
+        print(f"[LAUGH-DNA] ⚠ Referencia '{ref_id}' no encontrada: {path}", flush=True)
         return None
-    print("[LAUGH-DNA] Analizando dinámica de la risa (F0 + AP)…", flush=True)
-    y, _ = librosa.load(LAUGH_REF_PATH, sr=WORLD_SR, mono=True, duration=20.0)
+    print(f"[LAUGH-DNA] Analizando dinámica de risa '{ref_id}' (F0 + AP)…", flush=True)
+    y, _ = librosa.load(path, sr=WORLD_SR, mono=True, duration=20.0)
     y64 = y.astype(np.float64)
     f0, _t = pw.dio(y64, WORLD_SR)
     f0      = pw.stonemask(y64, f0, _t, WORLD_SR)
@@ -574,10 +582,11 @@ def _analyze_laugh_world():
     ap      = pw.d4c(y64, f0, _t, WORLD_SR)
     voiced  = f0 > 0
     f0_med  = float(np.median(f0[voiced])) if voiced.any() else 200.0
-    _LAUGH_WORLD = {"f0": f0, "sp": sp, "ap": ap, "f0_median": f0_med}
-    print(f"[LAUGH-DNA] Risa analizada ✓ — {sp.shape[0]} frames, "
+    feats   = {"f0": f0, "sp": sp, "ap": ap, "f0_median": f0_med}
+    _LAUGH_WORLD[ref_id] = feats
+    print(f"[LAUGH-DNA] Risa '{ref_id}' analizada ✓ — {sp.shape[0]} frames, "
           f"f0_median={f0_med:.1f} Hz", flush=True)
-    return _LAUGH_WORLD
+    return feats
 
 
 # Cadena rica en vocales para construir el banco de frames de cada voz.
@@ -680,13 +689,14 @@ def _synthesize_cloned_laugh(voice_id: str, params: dict | None = None) -> bytes
     speed          = float(np.clip(p.get("speed", 1.0), 0.7, 1.4))
     jitter_semis   = float(np.clip(p.get("jitter_semis", 0.0), 0.0, 1.5))
     frames_limit   = int(p.get("frames_limit", 0))
+    laugh_ref      = (p.get("laugh_ref") or _DEFAULT_LAUGH_REF).strip()
 
-    cache_key = (voice_id, f0_shift_semis, f0_var_scale, ap_mix, speed,
-                 jitter_semis, frames_limit)
+    cache_key = (voice_id, laugh_ref, f0_shift_semis, f0_var_scale, ap_mix,
+                 speed, jitter_semis, frames_limit)
     if cache_key in _LAUGH_WAV_CACHE:
         return _LAUGH_WAV_CACHE[cache_key]
 
-    laugh = _analyze_laugh_world()
+    laugh = _analyze_laugh_world(laugh_ref)
     if laugh is None:
         return None
     bank = _build_voice_vq_bank(voice_id)
@@ -776,13 +786,20 @@ def laugh_clone():
     """
     Devuelve un WAV de la voz objetivo riéndose, construido sintetizando
     "ja" con esa voz y reshapeándolo según el patrón de la risa de
-    referencia. Cuerpo: {"voice": "lolo-piper-patch"}
+    referencia. Cuerpo: {"voice": "lolo-piper-patch", "laughRef": "katja",
+                        "params": {...opcional...}}
     """
     d = request.get_json(force=True) or {}
     voice_id = (d.get("voice") or "").strip()
     if not voice_id:
         return jsonify({"error": "voice requerido"}), 400
-    params = d.get("params") if isinstance(d.get("params"), dict) else None
+    params = dict(d.get("params")) if isinstance(d.get("params"), dict) else {}
+    laugh_ref = (d.get("laughRef") or d.get("laugh_ref") or "").strip()
+    if laugh_ref:
+        if laugh_ref not in _LAUGH_REFS:
+            return jsonify({"error": f"laughRef '{laugh_ref}' no registrada",
+                            "available": sorted(_LAUGH_REFS.keys())}), 400
+        params["laugh_ref"] = laugh_ref
     try:
         wav = _synthesize_cloned_laugh(voice_id, params)
     except Exception as e:
