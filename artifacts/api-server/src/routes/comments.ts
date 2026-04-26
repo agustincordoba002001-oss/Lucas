@@ -1,6 +1,7 @@
 import { Router }      from "express";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readFileSync } from "fs";
+import { spawn }       from "child_process";
 
 const commentsRouter = Router();
 
@@ -140,6 +141,9 @@ const NEXUS_VOICE_WHITELIST = new Set([
   "darwin-xtts", "diever", "nexus", "nexus-ultra",
   "nexus-piper-patch", "lolo-piper-patch", "darwin-piper-patch",
   "claude-mx", "daniela-ar", "carlfm-es", "davefx-es",
+  "darwin",
+  "gonzalo-co", "jorge-mx", "alvaro-es", "tomas-ar", "mateo-uy",
+  "dalia-mx", "salome-co", "elvira-es",
 ]);
 
 function normalizeWord(raw: string): string {
@@ -195,6 +199,27 @@ function concatWavBuffers(bufs: Buffer[]): Buffer {
   return out;
 }
 
+function transcodeToWav(input: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const ff = spawn("ffmpeg", [
+      "-hide_banner", "-loglevel", "error",
+      "-i", "pipe:0",
+      "-f", "wav", "-acodec", "pcm_s16le", "-ar", "24000", "-ac", "1",
+      "pipe:1",
+    ]);
+    const chunks: Buffer[] = [];
+    const errs:   Buffer[] = [];
+    ff.stdout.on("data", (c) => chunks.push(c));
+    ff.stderr.on("data", (c) => errs.push(c));
+    ff.on("error", reject);
+    ff.on("close", (code) => {
+      if (code === 0) resolve(Buffer.concat(chunks));
+      else reject(new Error(`ffmpeg salió ${code}: ${Buffer.concat(errs).toString()}`));
+    });
+    ff.stdin.end(input);
+  });
+}
+
 async function ensureWordInDict(voiceId: string, wordNorm: string, opts?: { maxRetries?: number; retryDelayMs?: number }): Promise<{ added: boolean; bytes: number }> {
   const existing = db.prepare("SELECT bytes FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(voiceId, wordNorm) as { bytes: number } | undefined;
   if (existing) return { added: false, bytes: existing.bytes };
@@ -212,11 +237,16 @@ async function ensureWordInDict(voiceId: string, wordNorm: string, opts?: { maxR
       });
       if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para palabra "${wordNorm}"`);
       const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
-      const buf = Buffer.from(await ttsRes.arrayBuffer());
-      if (!ct.includes("wav")) throw new Error(`La voz ${voiceId} no devuelve WAV (necesario para Nexus Decreciente)`);
+      let buf   = Buffer.from(await ttsRes.arrayBuffer());
+
+      // El diccionario sólo concatena WAV. Si la voz devuelve MP3 (Edge TTS),
+      // lo transcodificamos a WAV PCM 24kHz mono para poder pegarlo después.
+      if (!ct.includes("wav")) {
+        buf = await transcodeToWav(buf);
+      }
 
       db.prepare("INSERT OR IGNORE INTO voice_word_audio (voice_id, word_norm, audio, bytes, ct) VALUES (?, ?, ?, ?, ?)")
-        .run(voiceId, wordNorm, buf, buf.byteLength, ct);
+        .run(voiceId, wordNorm, buf, buf.byteLength, "audio/wav");
       return { added: true, bytes: buf.byteLength };
     } catch (e) {
       lastErr = e as Error;
