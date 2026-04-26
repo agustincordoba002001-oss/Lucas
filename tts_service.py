@@ -483,6 +483,7 @@ def health():
         "piper":   list(_piper.keys()),
         "patched": list(_PATCHED_VOICES.keys()),
         "world_ready": list(_world_cache.keys()),
+        "motor_darwin_ready": bool(_MOTOR_READY),
     })
 
 # ── Edge TTS ──────────────────────────────────────────────────────────────────

@@ -55,14 +55,23 @@ echo "[bootstrap] Starting Python TTS engine on port $TTS_SERVICE_PORT…"
 python3 tts_service.py 2>&1 | sed -u 's/^/[tts] /' &
 TTS_PID=$!
 
-# 3) Wait briefly for the TTS engine to become healthy (non-fatal if slow)
-for i in $(seq 1 40); do
-  if curl -fsS "http://127.0.0.1:${TTS_SERVICE_PORT}/health" >/dev/null 2>&1; then
-    echo "[bootstrap] TTS engine ready ✓"
+# 3) Esperar a que el motor TTS responda Y que el Motor Darwin VQ termine
+#    de cargar (~30s). Así, cuando arranque la API, los primeros clicks en
+#    Darwin no rebotan con 503 mientras el motor todavía se inicializa.
+echo "[bootstrap] Esperando a que el motor Darwin esté 100% listo…"
+DARWIN_READY=0
+for i in $(seq 1 240); do  # hasta 120s
+  HEALTH="$(curl -fsS "http://127.0.0.1:${TTS_SERVICE_PORT}/health" 2>/dev/null || true)"
+  if [ -n "$HEALTH" ] && echo "$HEALTH" | grep -q '"motor_darwin_ready": *true'; then
+    echo "[bootstrap] Motor Darwin listo ✓"
+    DARWIN_READY=1
     break
   fi
   sleep 0.5
 done
+if [ "$DARWIN_READY" -ne 1 ]; then
+  echo "[bootstrap] ⚠️  Motor Darwin tardó más de 120s — arranco igual (caerá a Edge sin convertir hasta que termine)."
+fi
 
 # 4) Start the API server in the foreground (port 5000 → preview pane)
 echo "[bootstrap] Starting API server + UI on port $PORT…"
