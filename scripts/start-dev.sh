@@ -17,6 +17,19 @@ export TTS_SERVICE_URL="${TTS_SERVICE_URL:-http://127.0.0.1:${TTS_SERVICE_PORT}}
 export TTS_API_URL="${TTS_API_URL:-http://127.0.0.1:${PORT}/api/tts/generate}"
 export FRONTEND_DIST="${FRONTEND_DIST:-$ROOT_DIR/artifacts/lolo-cd/dist/public}"
 
+# 0) Auto-instalar dependencias si faltan (al recargar el repositorio).
+#    Idempotente: si ya están instaladas, pnpm/uv salen casi de inmediato.
+if [ ! -d "$ROOT_DIR/node_modules" ] || [ ! -d "$ROOT_DIR/artifacts/lolo-cd/node_modules" ]; then
+  echo "[bootstrap] node_modules ausente — corriendo 'pnpm install' (solo la primera vez)…"
+  pnpm install --prefer-offline
+fi
+
+if [ ! -d "$ROOT_DIR/.pythonlibs" ] && command -v uv >/dev/null 2>&1; then
+  echo "[bootstrap] .pythonlibs ausente — corriendo 'uv sync' (solo la primera vez)…"
+  UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.pythonlibs" uv sync --frozen || \
+    UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.pythonlibs" uv sync
+fi
+
 # 1) Build artifacts on first run (idempotent and cheap thanks to vite/esbuild caches)
 if [ ! -f "$FRONTEND_DIST/index.html" ]; then
   echo "[bootstrap] Building React frontend (lolo-cd)…"
