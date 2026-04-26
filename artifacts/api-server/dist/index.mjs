@@ -33160,20 +33160,60 @@ function concatWavBuffers2(bufs) {
   totalPcm.copy(out, 44);
   return out;
 }
-async function ensureWordInDict(voiceId, wordNorm) {
+async function ensureWordInDict(voiceId, wordNorm, opts) {
   const existing = db.prepare("SELECT bytes FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(voiceId, wordNorm);
   if (existing) return { added: false, bytes: existing.bytes };
-  const ttsRes = await fetch(TTS_API, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ texto: wordNorm, voiceId })
+  const maxRetries = opts?.maxRetries ?? 4;
+  const retryDelayMs = opts?.retryDelayMs ?? 800;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const ttsRes = await fetch(TTS_API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ texto: wordNorm, voiceId })
+      });
+      if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para palabra "${wordNorm}"`);
+      const ct = ttsRes.headers.get("content-type") ?? "audio/wav";
+      const buf = Buffer.from(await ttsRes.arrayBuffer());
+      if (!ct.includes("wav")) throw new Error(`La voz ${voiceId} no devuelve WAV (necesario para Nexus Decreciente)`);
+      db.prepare("INSERT OR IGNORE INTO voice_word_audio (voice_id, word_norm, audio, bytes, ct) VALUES (?, ?, ?, ?, ?)").run(voiceId, wordNorm, buf, buf.byteLength, ct);
+      return { added: true, bytes: buf.byteLength };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxRetries) {
+        const wait = retryDelayMs * Math.pow(1.6, attempt);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+  }
+  throw lastErr ?? new Error(`No se pudo poblar la palabra "${wordNorm}"`);
+}
+var nexusPopulations = /* @__PURE__ */ new Map();
+function startNexusPopulation(commentId, voiceId, words) {
+  const existing = nexusPopulations.get(commentId);
+  if (existing) return existing;
+  const state = {
+    total: words.length,
+    done: 0,
+    failed: 0,
+    promise: Promise.resolve()
+  };
+  state.promise = (async () => {
+    for (const w of words) {
+      try {
+        await ensureWordInDict(voiceId, w);
+        state.done++;
+      } catch (e) {
+        state.failed++;
+        console.warn(`[NexusPop ${commentId}] palabra "${w}" fall\xF3:`, e.message);
+      }
+    }
+  })().finally(() => {
+    setTimeout(() => nexusPopulations.delete(commentId), 6e4);
   });
-  if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para palabra "${wordNorm}"`);
-  const ct = ttsRes.headers.get("content-type") ?? "audio/wav";
-  const buf = Buffer.from(await ttsRes.arrayBuffer());
-  if (!ct.includes("wav")) throw new Error(`La voz ${voiceId} no devuelve WAV (necesario para Nexus Decreciente)`);
-  db.prepare("INSERT OR IGNORE INTO voice_word_audio (voice_id, word_norm, audio, bytes, ct) VALUES (?, ?, ?, ?, ?)").run(voiceId, wordNorm, buf, buf.byteLength, ct);
-  return { added: true, bytes: buf.byteLength };
+  nexusPopulations.set(commentId, state);
+  return state;
 }
 commentsRouter.get("/voice-dict/stats", (req, res) => {
   const voiceId = req.query.voiceId?.trim();
@@ -33229,24 +33269,36 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
       res.status(404).json({ error: "Sin palabras en la secuencia" });
       return;
     }
+    const pop = nexusPopulations.get(id);
+    if (pop) {
+      try {
+        await pop.promise;
+      } catch {
+      }
+    }
     try {
       const buffers = [];
       for (const w of words) {
         let row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w);
         if (!row) {
-          await ensureWordInDict(dictVoice, w);
+          try {
+            await ensureWordInDict(dictVoice, w);
+          } catch (err) {
+            console.warn(`[NexusPlay] omitiendo palabra "${w}":`, err.message);
+          }
           row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w);
         }
         if (row?.audio) buffers.push(Buffer.from(row.audio));
       }
       if (buffers.length === 0) {
-        res.status(503).json({ error: "No se pudo armar el audio" });
+        res.status(503).json({ error: "No se pudo armar el audio (diccionario vac\xEDo, intent\xE1 de nuevo en unos segundos)" });
         return;
       }
       const audio = concatWavBuffers2(buffers);
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("X-Seed", "NEXUS-DECRECIENTE");
       res.setHeader("X-Nexus-Words", words.length.toString());
+      res.setHeader("X-Nexus-Words-Used", buffers.length.toString());
       res.setHeader("X-Nexus-Voice", dictVoice);
       res.send(audio);
       return;
@@ -33359,6 +33411,7 @@ commentsRouter.post("/comments", async (req, res) => {
   let wordSeqJson = null;
   let nexusVoiceId = null;
   let nexusStats = null;
+  let nexusWordsToPopulate = null;
   if (safeStorageMode === "nexus-decreciente") {
     const dictVoice = NEXUS_VOICE_WHITELIST.has(voiceId) ? voiceId : "darwin-xtts";
     const words = splitWords(texto.trim());
@@ -33366,23 +33419,15 @@ commentsRouter.post("/comments", async (req, res) => {
       res.status(400).json({ error: "texto sin palabras v\xE1lidas" });
       return;
     }
-    let wordsNew = 0;
-    let bytesAdded = 0;
-    try {
-      for (const w of words) {
-        const r = await ensureWordInDict(dictVoice, w);
-        if (r.added) {
-          wordsNew++;
-          bytesAdded += r.bytes;
-        }
-      }
-    } catch (e) {
-      res.status(503).json({ error: e.message });
-      return;
+    const missing = [];
+    for (const w of words) {
+      const row = db.prepare("SELECT 1 FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w);
+      if (!row) missing.push(w);
     }
     wordSeqJson = JSON.stringify(words);
     nexusVoiceId = dictVoice;
-    nexusStats = { wordsTotal: words.length, wordsNew, dictBytesAdded: bytesAdded };
+    nexusWordsToPopulate = missing;
+    nexusStats = { wordsTotal: words.length, wordsNew: missing.length, dictBytesAdded: 0 };
   }
   if (safeStorageMode === "photon-permanent" && audioData?.b64?.trim()) {
     const safeVoiceId = typeof voiceId === "string" && voiceId.trim() ? voiceId.trim() : "darwin";
@@ -33403,6 +33448,9 @@ commentsRouter.post("/comments", async (req, res) => {
     wordSeqJson,
     nexusVoiceId
   );
+  if (safeStorageMode === "nexus-decreciente" && nexusVoiceId && nexusWordsToPopulate && nexusWordsToPopulate.length > 0) {
+    startNexusPopulation(id, nexusVoiceId, nexusWordsToPopulate);
+  }
   res.status(201).json({
     id,
     autor: autor.trim() || "An\xF3nimo",

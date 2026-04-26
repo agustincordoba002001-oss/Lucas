@@ -195,23 +195,71 @@ function concatWavBuffers(bufs: Buffer[]): Buffer {
   return out;
 }
 
-async function ensureWordInDict(voiceId: string, wordNorm: string): Promise<{ added: boolean; bytes: number }> {
+async function ensureWordInDict(voiceId: string, wordNorm: string, opts?: { maxRetries?: number; retryDelayMs?: number }): Promise<{ added: boolean; bytes: number }> {
   const existing = db.prepare("SELECT bytes FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(voiceId, wordNorm) as { bytes: number } | undefined;
   if (existing) return { added: false, bytes: existing.bytes };
 
-  const ttsRes = await fetch(TTS_API, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ texto: wordNorm, voiceId }),
-  });
-  if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para palabra "${wordNorm}"`);
-  const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
-  const buf = Buffer.from(await ttsRes.arrayBuffer());
-  if (!ct.includes("wav")) throw new Error(`La voz ${voiceId} no devuelve WAV (necesario para Nexus Decreciente)`);
+  const maxRetries   = opts?.maxRetries   ?? 4;
+  const retryDelayMs = opts?.retryDelayMs ?? 800;
 
-  db.prepare("INSERT OR IGNORE INTO voice_word_audio (voice_id, word_norm, audio, bytes, ct) VALUES (?, ?, ?, ?, ?)")
-    .run(voiceId, wordNorm, buf, buf.byteLength, ct);
-  return { added: true, bytes: buf.byteLength };
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const ttsRes = await fetch(TTS_API, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ texto: wordNorm, voiceId }),
+      });
+      if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para palabra "${wordNorm}"`);
+      const ct  = ttsRes.headers.get("content-type") ?? "audio/wav";
+      const buf = Buffer.from(await ttsRes.arrayBuffer());
+      if (!ct.includes("wav")) throw new Error(`La voz ${voiceId} no devuelve WAV (necesario para Nexus Decreciente)`);
+
+      db.prepare("INSERT OR IGNORE INTO voice_word_audio (voice_id, word_norm, audio, bytes, ct) VALUES (?, ?, ?, ?, ?)")
+        .run(voiceId, wordNorm, buf, buf.byteLength, ct);
+      return { added: true, bytes: buf.byteLength };
+    } catch (e) {
+      lastErr = e as Error;
+      if (attempt < maxRetries) {
+        const wait = retryDelayMs * Math.pow(1.6, attempt);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+  }
+  throw lastErr ?? new Error(`No se pudo poblar la palabra "${wordNorm}"`);
+}
+
+// Población en background del diccionario para un comentario nexus-decreciente.
+// El comentario ya está en la BD: si una palabra falla, simplemente queda vacía
+// y se repuebla on-demand en GET /comments/:id/audio.
+type NexusPopState = { promise: Promise<void>; total: number; done: number; failed: number };
+const nexusPopulations = new Map<string, NexusPopState>();
+
+function startNexusPopulation(commentId: string, voiceId: string, words: string[]): NexusPopState {
+  const existing = nexusPopulations.get(commentId);
+  if (existing) return existing;
+
+  const state: NexusPopState = {
+    total: words.length, done: 0, failed: 0,
+    promise: Promise.resolve(),
+  };
+
+  state.promise = (async () => {
+    for (const w of words) {
+      try {
+        await ensureWordInDict(voiceId, w);
+        state.done++;
+      } catch (e) {
+        state.failed++;
+        console.warn(`[NexusPop ${commentId}] palabra "${w}" falló:`, (e as Error).message);
+      }
+    }
+  })().finally(() => {
+    setTimeout(() => nexusPopulations.delete(commentId), 60_000);
+  });
+
+  nexusPopulations.set(commentId, state);
+  return state;
 }
 
 commentsRouter.get("/voice-dict/stats", (req, res) => {
@@ -276,21 +324,33 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
     try { words = JSON.parse(fullRow?.word_seq ?? "[]"); } catch { words = []; }
     if (words.length === 0) { res.status(404).json({ error: "Sin palabras en la secuencia" }); return; }
 
+    // Si la población background sigue corriendo, esperá a que termine antes
+    // de armar el audio para evitar palabras faltantes en el primer play.
+    const pop = nexusPopulations.get(id);
+    if (pop) {
+      try { await pop.promise; } catch { /* fail-soft, intentamos servir igual */ }
+    }
+
     try {
       const buffers: Buffer[] = [];
       for (const w of words) {
         let row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w) as { audio: Buffer } | undefined;
         if (!row) {
-          await ensureWordInDict(dictVoice, w);
+          try {
+            await ensureWordInDict(dictVoice, w);
+          } catch (err) {
+            console.warn(`[NexusPlay] omitiendo palabra "${w}":`, (err as Error).message);
+          }
           row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w) as { audio: Buffer } | undefined;
         }
         if (row?.audio) buffers.push(Buffer.from(row.audio));
       }
-      if (buffers.length === 0) { res.status(503).json({ error: "No se pudo armar el audio" }); return; }
+      if (buffers.length === 0) { res.status(503).json({ error: "No se pudo armar el audio (diccionario vacío, intentá de nuevo en unos segundos)" }); return; }
       const audio = concatWavBuffers(buffers);
       res.setHeader("Content-Type", "audio/wav");
       res.setHeader("X-Seed", "NEXUS-DECRECIENTE");
       res.setHeader("X-Nexus-Words", words.length.toString());
+      res.setHeader("X-Nexus-Words-Used", buffers.length.toString());
       res.setHeader("X-Nexus-Voice", dictVoice);
       res.send(audio);
       return;
@@ -418,24 +478,23 @@ commentsRouter.post("/comments", async (req, res) => {
   let nexusVoiceId: string | null = null;
   let nexusStats: { wordsTotal: number; wordsNew: number; dictBytesAdded: number } | null = null;
 
+  let nexusWordsToPopulate: string[] | null = null;
   if (safeStorageMode === "nexus-decreciente") {
     const dictVoice = NEXUS_VOICE_WHITELIST.has(voiceId) ? voiceId : "darwin-xtts";
     const words = splitWords(texto.trim());
     if (words.length === 0) { res.status(400).json({ error: "texto sin palabras válidas" }); return; }
-    let wordsNew = 0;
-    let bytesAdded = 0;
-    try {
-      for (const w of words) {
-        const r = await ensureWordInDict(dictVoice, w);
-        if (r.added) { wordsNew++; bytesAdded += r.bytes; }
-      }
-    } catch (e) {
-      res.status(503).json({ error: (e as Error).message });
-      return;
+
+    // Sólo nos preocupan las palabras que aún no están en el diccionario.
+    const missing: string[] = [];
+    for (const w of words) {
+      const row = db.prepare("SELECT 1 FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w);
+      if (!row) missing.push(w);
     }
+
     wordSeqJson = JSON.stringify(words);
     nexusVoiceId = dictVoice;
-    nexusStats = { wordsTotal: words.length, wordsNew, dictBytesAdded: bytesAdded };
+    nexusWordsToPopulate = missing;
+    nexusStats = { wordsTotal: words.length, wordsNew: missing.length, dictBytesAdded: 0 };
   }
 
   if (safeStorageMode === "photon-permanent" && audioData?.b64?.trim()) {
@@ -458,6 +517,14 @@ commentsRouter.post("/comments", async (req, res) => {
     wordSeqJson,
     nexusVoiceId,
   );
+
+  // Disparar la población del diccionario en background. El comentario YA está
+  // en la BD, así que el frontend lo ve aparecer al instante. Si el play llega
+  // antes de que termine, GET /comments/:id/audio espera la promesa.
+  if (safeStorageMode === "nexus-decreciente" && nexusVoiceId && nexusWordsToPopulate && nexusWordsToPopulate.length > 0) {
+    startNexusPopulation(id, nexusVoiceId, nexusWordsToPopulate);
+  }
+
   res.status(201).json({
     id,
     autor: autor.trim() || "Anónimo",

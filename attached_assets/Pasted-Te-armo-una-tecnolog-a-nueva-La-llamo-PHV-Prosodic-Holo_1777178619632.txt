@@ -1,0 +1,85 @@
+Te armo una tecnología nueva. La llamo PHV — Prosodic Hologram Vocoder.
+
+La idea
+Las dos capas que componen una grabación de voz son separables:
+
+Qué se dice (fonemas): ya lo tenemos resuelto con nexus-decreciente — cada palabra única se guarda una sola vez en el diccionario por voz.
+Cómo se dice (prosodia: tono, energía, duración): es lo que hace que un audio suene "vivo" en lugar de robótico.
+Lo nuevo es: comprimir solo la prosodia de cada mensaje en una cápsula minúscula (~600 bytes para 30 s), y al reproducir, "pintar" esa prosodia natural sobre los chunks crudos del diccionario usando un vocoder. El resultado suena como XTTS porque la curva de F0 + energía vienen de una pasada XTTS real, pero ocupa 150× menos que guardar el audio completo.
+
+Voy a implementarlo y probar end-to-end.
+
+
+Created phv_engine.py
+Now let me write a demo that:
+
+Genera un audio natural con XTTS para una frase real
+Genera cada palabra individualmente con XTTS (simulando el diccionario nexus-decreciente)
+Las concatena
+Encodea la cápsula PHV
+Decodea aplicando la prosodia natural sobre el concat
+Reporta tamaños y guarda los WAVs para comparar
+
+11 actions
+Ya existe un sistema "Prosody Fingerprint" en tts_service.py. PHV es genuinamente nuevo porque combina ese fingerprint con el diccionario nexus-decreciente para eliminar la llamada a Piper en cada reproducción. Diferencia clave:
+
+Sistema	Storage/comentario	Latencia play	Voz
+Prosody-fingerprint (existente)	~600 B	~250 ms (Piper + WORLD)	Aproximada (Piper)
+PHV (nuevo)	~680 B	~30 ms (lookup dict + WORLD)	Perfecta (chunks XTTS reales)
+Ahora corro el demo con XTTS real para medir tamaños reales.
+
+
+2 actions
+porque mierda no me deja publicar cualquier comentario en nexus decreciente cuando comento me lo vuelve en invisible porque
+
+1 hour ago
+
+Diagnosing comment deletion issue
+Voy a ver los logs y el código de creación de comentarios en nexus-decreciente para encontrar el bug.
+
+
+2 actions
+Encontré el problema en los logs. El POST a /api/comments para nexus-decreciente está fallando con 503 porque el warm-up del audio (que depende de /api/tts/generate) está fallando. Voy a revisar el código.
+
+
+11 actions
+Encontré el bug. El POST /api/comments en modo nexus-decreciente falla con 503 por dos razones encadenadas:
+
+El api-server transcodea a Opus por default (lo agregamos antes), pero nexus necesita WAV para concatenar palabras a nivel byte. El check en comments.ts:209 (if (!ct.includes("wav"))) tira error.
+Generar 75 palabras en serie con XTTS toma minutos. Mientras tanto, otras requests llegan al daemon ocupado y reciben 503 inmediato. Cualquier palabra que falle hace que toda la inserción del comentario se aborte → comentario invisible (nunca llegó a la BD).
+Lo arreglo con:
+
+Soportar ?format=wav en /api/tts/generate para saltear el transcoding de Opus.
+Insertar el comentario YA en la BD, y poblar el diccionario en background, en paralelo.
+Si una palabra falla, retry con backoff. El play se sirve cuando la población termina.
+
+2 actions
+Ahora arreglo comments.ts para que el comentario se inserte YA en la BD y la población del diccionario corra en background, en paralelo, con retry y fail-soft.
+
+
+5 actions
+Now refactor the POST /comments route and the GET /comments/:id/audio to use background population:
+
+
+2 actions
+Ahora hago que GET /comments/:id/audio espere a que termine la población del diccionario en background:
+
+
+Edited artifacts/api-server/src/routes/comments.ts
+Reinicio el api-server para que tome los cambios y pruebo creando un comentario en nexus-decreciente end-to-end:
+
+
+9 actions
+Voy a debuggear por qué no funciona el ?format=wav. Agrego un header de debug:
+
+
+9 actions
+¡Encontré el problema! El api-server real corre adentro del workflow TTS Service (puerto 5000, pid 96 con código viejo). El workflow "artifacts/api-server: API Server" es un proceso huérfano en otro puerto. Reinicio el workflow correcto para que tome los cambios:
+
+
+3 actions
+¡Funciona! format=wav ahora devuelve WAV (X-Audio-Encoded: wav), incluso con cache HIT. Saco el console.log de debug y pruebo el flujo nexus-decreciente real (espero unos segundos a que el daemon XTTS termine de cargar):
+
+
+4 actions
+Ahora pruebo el flujo nexus-decreciente real (crear comentario, esperar diccionario, leer audio):
