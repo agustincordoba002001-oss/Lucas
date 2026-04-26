@@ -18,6 +18,7 @@ dependencies = [
     "psycopg2-binary>=2.9.12",
     "email-validator>=2.3.0",
     "gunicorn>=25.3.0",
+    "coqui-tts",
 ]
 
 [[tool.uv.index]]
