@@ -18673,10 +18673,10 @@ var require_view = __commonJS({
     var debug = require_src()("express:view");
     var path2 = __require("node:path");
     var fs = __require("node:fs");
-    var dirname = path2.dirname;
+    var dirname2 = path2.dirname;
     var basename = path2.basename;
     var extname = path2.extname;
-    var join3 = path2.join;
+    var join4 = path2.join;
     var resolve = path2.resolve;
     module.exports = View;
     function View(name, options) {
@@ -18712,7 +18712,7 @@ var require_view = __commonJS({
       for (var i = 0; i < roots.length && !path3; i++) {
         var root = roots[i];
         var loc = resolve(root, name);
-        var dir = dirname(loc);
+        var dir = dirname2(loc);
         var file = basename(loc);
         path3 = this.resolve(dir, file);
       }
@@ -18738,12 +18738,12 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path3 = join3(dir, file);
+      var path3 = join4(dir, file);
       var stat = tryStat(path3);
       if (stat && stat.isFile()) {
         return path3;
       }
-      path3 = join3(dir, basename(file, ext), "index" + ext);
+      path3 = join4(dir, basename(file, ext), "index" + ext);
       stat = tryStat(path3);
       if (stat && stat.isFile()) {
         return path3;
@@ -22388,7 +22388,7 @@ var require_send = __commonJS({
     var Stream = __require("stream");
     var util2 = __require("util");
     var extname = path2.extname;
-    var join3 = path2.join;
+    var join4 = path2.join;
     var normalize = path2.normalize;
     var resolve = path2.resolve;
     var sep = path2.sep;
@@ -22560,7 +22560,7 @@ var require_send = __commonJS({
           return res;
         }
         parts = path3.split(sep);
-        path3 = normalize(join3(root, path3));
+        path3 = normalize(join4(root, path3));
       } else {
         if (UP_PATH_REGEXP.test(path3)) {
           debug('malicious path "%s"', path3);
@@ -22693,7 +22693,7 @@ var require_send = __commonJS({
           if (err) return self.onStatError(err);
           return self.error(404);
         }
-        var p = join3(path3, self._index[i]);
+        var p = join4(path3, self._index[i]);
         debug('stat "%s"', p);
         fs.stat(p, function(err2, stat) {
           if (err2) return next(err2);
@@ -25817,7 +25817,7 @@ var require_thread_stream = __commonJS({
     var { version } = require_package();
     var { EventEmitter } = __require("events");
     var { Worker } = __require("worker_threads");
-    var { join: join3 } = __require("path");
+    var { join: join4 } = __require("path");
     var { pathToFileURL } = __require("url");
     var { wait } = require_wait();
     var {
@@ -25853,7 +25853,7 @@ var require_thread_stream = __commonJS({
     function createWorker(stream, opts) {
       const { filename, workerData } = opts;
       const bundlerOverrides = "__bundlerPathsOverrides" in globalThis ? globalThis.__bundlerPathsOverrides : {};
-      const toExecute = bundlerOverrides["thread-stream-worker"] || join3(__dirname, "lib", "worker.js");
+      const toExecute = bundlerOverrides["thread-stream-worker"] || join4(__dirname, "lib", "worker.js");
       const worker = new Worker(toExecute, {
         ...opts.workerOpts,
         trackUnmanagedFds: false,
@@ -26239,7 +26239,7 @@ var require_transport = __commonJS({
     "use strict";
     var { createRequire } = __require("module");
     var getCallers = require_caller();
-    var { join: join3, isAbsolute, sep } = __require("node:path");
+    var { join: join4, isAbsolute, sep } = __require("node:path");
     var sleep = require_atomic_sleep();
     var onExit = require_on_exit_leak_free();
     var ThreadStream = require_thread_stream();
@@ -26302,7 +26302,7 @@ var require_transport = __commonJS({
         throw new Error("only one of target or targets can be specified");
       }
       if (targets) {
-        target = bundlerOverrides["pino-worker"] || join3(__dirname, "worker.js");
+        target = bundlerOverrides["pino-worker"] || join4(__dirname, "worker.js");
         options.targets = targets.filter((dest) => dest.target).map((dest) => {
           return {
             ...dest,
@@ -26320,7 +26320,7 @@ var require_transport = __commonJS({
           });
         });
       } else if (pipeline) {
-        target = bundlerOverrides["pino-worker"] || join3(__dirname, "worker.js");
+        target = bundlerOverrides["pino-worker"] || join4(__dirname, "worker.js");
         options.pipelines = [pipeline.map((dest) => {
           return {
             ...dest,
@@ -26342,7 +26342,7 @@ var require_transport = __commonJS({
           return origin;
         }
         if (origin === "pino/file") {
-          return join3(__dirname, "..", "file.js");
+          return join4(__dirname, "..", "file.js");
         }
         let fixTarget2;
         for (const filePath of callers) {
@@ -27331,7 +27331,7 @@ var require_safe_stable_stringify = __commonJS({
               return circularValue;
             }
             let res = "";
-            let join3 = ",";
+            let join4 = ",";
             const originalIndentation = indentation;
             if (Array.isArray(value)) {
               if (value.length === 0) {
@@ -27345,7 +27345,7 @@ var require_safe_stable_stringify = __commonJS({
                 indentation += spacer;
                 res += `
 ${indentation}`;
-                join3 = `,
+                join4 = `,
 ${indentation}`;
               }
               const maximumValuesToStringify = Math.min(value.length, maximumBreadth);
@@ -27353,13 +27353,13 @@ ${indentation}`;
               for (; i < maximumValuesToStringify - 1; i++) {
                 const tmp2 = stringifyFnReplacer(String(i), value, stack, replacer, spacer, indentation);
                 res += tmp2 !== void 0 ? tmp2 : "null";
-                res += join3;
+                res += join4;
               }
               const tmp = stringifyFnReplacer(String(i), value, stack, replacer, spacer, indentation);
               res += tmp !== void 0 ? tmp : "null";
               if (value.length - 1 > maximumBreadth) {
                 const removedKeys = value.length - maximumBreadth - 1;
-                res += `${join3}"... ${getItemCount(removedKeys)} not stringified"`;
+                res += `${join4}"... ${getItemCount(removedKeys)} not stringified"`;
               }
               if (spacer !== "") {
                 res += `
@@ -27380,7 +27380,7 @@ ${originalIndentation}`;
             let separator = "";
             if (spacer !== "") {
               indentation += spacer;
-              join3 = `,
+              join4 = `,
 ${indentation}`;
               whitespace = " ";
             }
@@ -27394,13 +27394,13 @@ ${indentation}`;
               const tmp = stringifyFnReplacer(key2, value, stack, replacer, spacer, indentation);
               if (tmp !== void 0) {
                 res += `${separator}${strEscape(key2)}:${whitespace}${tmp}`;
-                separator = join3;
+                separator = join4;
               }
             }
             if (keyLength > maximumBreadth) {
               const removedKeys = keyLength - maximumBreadth;
               res += `${separator}"...":${whitespace}"${getItemCount(removedKeys)} not stringified"`;
-              separator = join3;
+              separator = join4;
             }
             if (spacer !== "" && separator.length > 1) {
               res = `
@@ -27441,7 +27441,7 @@ ${originalIndentation}`;
             }
             const originalIndentation = indentation;
             let res = "";
-            let join3 = ",";
+            let join4 = ",";
             if (Array.isArray(value)) {
               if (value.length === 0) {
                 return "[]";
@@ -27454,7 +27454,7 @@ ${originalIndentation}`;
                 indentation += spacer;
                 res += `
 ${indentation}`;
-                join3 = `,
+                join4 = `,
 ${indentation}`;
               }
               const maximumValuesToStringify = Math.min(value.length, maximumBreadth);
@@ -27462,13 +27462,13 @@ ${indentation}`;
               for (; i < maximumValuesToStringify - 1; i++) {
                 const tmp2 = stringifyArrayReplacer(String(i), value[i], stack, replacer, spacer, indentation);
                 res += tmp2 !== void 0 ? tmp2 : "null";
-                res += join3;
+                res += join4;
               }
               const tmp = stringifyArrayReplacer(String(i), value[i], stack, replacer, spacer, indentation);
               res += tmp !== void 0 ? tmp : "null";
               if (value.length - 1 > maximumBreadth) {
                 const removedKeys = value.length - maximumBreadth - 1;
-                res += `${join3}"... ${getItemCount(removedKeys)} not stringified"`;
+                res += `${join4}"... ${getItemCount(removedKeys)} not stringified"`;
               }
               if (spacer !== "") {
                 res += `
@@ -27481,7 +27481,7 @@ ${originalIndentation}`;
             let whitespace = "";
             if (spacer !== "") {
               indentation += spacer;
-              join3 = `,
+              join4 = `,
 ${indentation}`;
               whitespace = " ";
             }
@@ -27490,7 +27490,7 @@ ${indentation}`;
               const tmp = stringifyArrayReplacer(key2, value[key2], stack, replacer, spacer, indentation);
               if (tmp !== void 0) {
                 res += `${separator}${strEscape(key2)}:${whitespace}${tmp}`;
-                separator = join3;
+                separator = join4;
               }
             }
             if (spacer !== "" && separator.length > 1) {
@@ -27548,20 +27548,20 @@ ${originalIndentation}`;
               indentation += spacer;
               let res2 = `
 ${indentation}`;
-              const join4 = `,
+              const join5 = `,
 ${indentation}`;
               const maximumValuesToStringify = Math.min(value.length, maximumBreadth);
               let i = 0;
               for (; i < maximumValuesToStringify - 1; i++) {
                 const tmp2 = stringifyIndent(String(i), value[i], stack, spacer, indentation);
                 res2 += tmp2 !== void 0 ? tmp2 : "null";
-                res2 += join4;
+                res2 += join5;
               }
               const tmp = stringifyIndent(String(i), value[i], stack, spacer, indentation);
               res2 += tmp !== void 0 ? tmp : "null";
               if (value.length - 1 > maximumBreadth) {
                 const removedKeys = value.length - maximumBreadth - 1;
-                res2 += `${join4}"... ${getItemCount(removedKeys)} not stringified"`;
+                res2 += `${join5}"... ${getItemCount(removedKeys)} not stringified"`;
               }
               res2 += `
 ${originalIndentation}`;
@@ -27577,16 +27577,16 @@ ${originalIndentation}`;
               return '"[Object]"';
             }
             indentation += spacer;
-            const join3 = `,
+            const join4 = `,
 ${indentation}`;
             let res = "";
             let separator = "";
             let maximumPropertiesToStringify = Math.min(keyLength, maximumBreadth);
             if (isTypedArrayWithEntries(value)) {
-              res += stringifyTypedArray(value, join3, maximumBreadth);
+              res += stringifyTypedArray(value, join4, maximumBreadth);
               keys = keys.slice(value.length);
               maximumPropertiesToStringify -= value.length;
-              separator = join3;
+              separator = join4;
             }
             if (deterministic) {
               keys = sort(keys, comparator);
@@ -27597,13 +27597,13 @@ ${indentation}`;
               const tmp = stringifyIndent(key2, value[key2], stack, spacer, indentation);
               if (tmp !== void 0) {
                 res += `${separator}${strEscape(key2)}: ${tmp}`;
-                separator = join3;
+                separator = join4;
               }
             }
             if (keyLength > maximumBreadth) {
               const removedKeys = keyLength - maximumBreadth;
               res += `${separator}"...": "${getItemCount(removedKeys)} not stringified"`;
-              separator = join3;
+              separator = join4;
             }
             if (separator !== "") {
               res = `
@@ -27925,7 +27925,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/workspace/artifacts/api-server/dist";
+        const outputDir = "/workspaces/Lucas/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -32319,13 +32319,13 @@ import { join } from "path";
 import { existsSync, unlinkSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, utimesSync } from "fs";
 var ttsRouter = (0, import_express2.Router)();
 var TTS_SERVICE = process.env["TTS_SERVICE_URL"] ?? "http://127.0.0.1:5001";
-var DIEVER_REF = "/home/runner/workspace/diever_referencia.wav";
-var NEXUS_REF = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
-var NEXUS_CONFIG = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
+var DIEVER_REF = "/workspaces/Lucas/diever_referencia.wav";
+var NEXUS_REF = "/workspaces/Lucas/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
+var NEXUS_CONFIG = "/workspaces/Lucas/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
 var NEXUS_ULTRA_REF = NEXUS_REF;
-var NEXUS_ULTRA_CONFIG = "/home/runner/workspace/attached_assets/NEXUS_ULTRA_FAST_1776036098561.json";
+var NEXUS_ULTRA_CONFIG = "/workspaces/Lucas/attached_assets/NEXUS_ULTRA_FAST_1776036098561.json";
 var NEXUS_PIPER_PATCH = "nexus-piper-patch";
-var DAEMON_SCRIPT = "/home/runner/workspace/xtts_daemon.py";
+var DAEMON_SCRIPT = "/workspaces/Lucas/xtts_daemon.py";
 var daemon = null;
 var daemonReady = false;
 var daemonBuf = Buffer.alloc(0);
@@ -32709,7 +32709,7 @@ function concatWavBuffers(bufs) {
   totalPcm.copy(out, 44);
   return out;
 }
-var TTS_CACHE_DIR = "/home/runner/workspace/.tts_cache";
+var TTS_CACHE_DIR = "/workspaces/Lucas/.tts_cache";
 var TTS_INFLIGHT = /* @__PURE__ */ new Map();
 var TTS_CACHE_LIMIT = 500;
 try {
@@ -32951,7 +32951,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
     try {
       await new Promise((resolve, reject) => {
         const proc = spawn("python3", [
-          "/home/runner/workspace/tts_engine.py",
+          "/workspaces/Lucas/tts_engine.py",
           text,
           voz.voice,
           voz.pitch,
@@ -32982,15 +32982,49 @@ var import_express3 = __toESM(require_express2(), 1);
 import { DatabaseSync } from "node:sqlite";
 import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import { spawn as spawn2 } from "child_process";
+import { dirname, join as join2 } from "path";
+import { fileURLToPath } from "url";
+
+// src/lib/intelligent-nexus.ts
+function getLearningStats(context) {
+  const scores = Array.from(context.microphraseCache.values()).map((m) => m.learningScore);
+  const topWords = Array.from(context.wordUsageStats.entries()).sort((a, b) => b[1].count - a[1].count).slice(0, 10).map(([w]) => w);
+  return {
+    totalWordsLearned: context.wordUsageStats.size,
+    microphrasesCached: context.microphraseCache.size,
+    averageLearningScore: scores.length > 0 ? scores.reduce((a, b) => a + b) / scores.length : 0,
+    topWords
+  };
+}
+function createLearningContext(voiceId) {
+  return {
+    voiceId,
+    wordUsageStats: /* @__PURE__ */ new Map(),
+    microphraseCache: /* @__PURE__ */ new Map(),
+    emotionPreferences: /* @__PURE__ */ new Map(),
+    lastUpdated: /* @__PURE__ */ new Date()
+  };
+}
+
+// src/routes/comments.ts
+var __dirname2 = dirname(fileURLToPath(import.meta.url));
+var REPO_ROOT = process.env["WORKSPACE_ROOT"] ?? join2(__dirname2, "../../../..");
 var commentsRouter = (0, import_express3.Router)();
-var DB_PATH = "/home/runner/workspace/comments.db";
-var JSON_PATH = "/home/runner/workspace/comments.json";
+var DB_PATH = process.env["COMMENTS_DB_PATH"] ?? join2(REPO_ROOT, "comments.db");
+var JSON_PATH = process.env["COMMENTS_JSON_PATH"] ?? join2(REPO_ROOT, "comments.json");
 var TTS_API = process.env["TTS_API_URL"] ?? "http://127.0.0.1:5000/api/tts/generate";
 var TTS_SERVICE2 = process.env["TTS_SERVICE_URL"] ?? "http://127.0.0.1:5001";
 var PHOTON_MEMORY_LIMIT_BYTES = 50 * 1024 * 1024;
 var photonMemoryCache = /* @__PURE__ */ new Map();
 var photonWarmups = /* @__PURE__ */ new Map();
 var photonMemoryBytes = 0;
+var voiceLearningContexts = /* @__PURE__ */ new Map();
+function getOrCreateLearningContext(voiceId) {
+  if (!voiceLearningContexts.has(voiceId)) {
+    voiceLearningContexts.set(voiceId, createLearningContext(voiceId));
+  }
+  return voiceLearningContexts.get(voiceId);
+}
 function photonCacheKey(voiceId, photonCapsule, texto) {
   return photonCapsule ? `photon:${voiceId}:${photonCapsule}:${texto}` : voiceId;
 }
@@ -33098,6 +33132,20 @@ db.exec(`
     ct         TEXT NOT NULL DEFAULT 'audio/wav',
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (voice_id, word_norm)
+  );
+  
+  CREATE TABLE IF NOT EXISTS voice_microphrases_intelligent (
+    voice_id      TEXT NOT NULL,
+    signature     TEXT NOT NULL,
+    tokens_json   TEXT NOT NULL,
+    audio         BLOB,
+    bytes         INTEGER,
+    learning_score REAL NOT NULL DEFAULT 0.5,
+    usage_count   INTEGER NOT NULL DEFAULT 0,
+    emotion       TEXT,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_used_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (voice_id, signature)
   );
 `);
 var NEXUS_VOICE_WHITELIST = /* @__PURE__ */ new Set([
@@ -33267,6 +33315,28 @@ commentsRouter.get("/voice-dict/stats", (req, res) => {
   const rows = db.prepare("SELECT voice_id AS voiceId, COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio GROUP BY voice_id").all();
   const total = db.prepare("SELECT COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio").get();
   res.json({ perVoice: rows, total });
+});
+commentsRouter.get("/voice-learning-stats", (req, res) => {
+  const voiceId = req.query.voiceId?.trim();
+  try {
+    if (voiceId) {
+      const context = getOrCreateLearningContext(voiceId);
+      const stats = getLearningStats(context);
+      res.json({
+        voiceId,
+        ...stats,
+        engine: "nexus-v2-intelligent"
+      });
+      return;
+    }
+    const allStats = {};
+    for (const [vid, context] of voiceLearningContexts.entries()) {
+      allStats[vid] = getLearningStats(context);
+    }
+    res.json({ allVoices: allStats, engine: "nexus-v2-intelligent" });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 var count = db.prepare("SELECT COUNT(*) as n FROM comentarios").get();
 if (count.n === 0 && existsSync2(JSON_PATH)) {
@@ -33517,9 +33587,9 @@ var import_express4 = __toESM(require_express2(), 1);
 import { randomUUID as randomUUID2 } from "crypto";
 import { spawn as spawn3 } from "child_process";
 import { existsSync as existsSync3, unlinkSync as unlinkSync2, writeFileSync as writeFileSync2 } from "fs";
-import { join as join2 } from "path";
+import { join as join3 } from "path";
 var voiceRouter = (0, import_express4.Router)();
-var ENCODER_SCRIPT = "/home/runner/workspace/voice_magic_text.py";
+var ENCODER_SCRIPT = "/workspaces/Lucas/voice_magic_text.py";
 var MAX_AUDIO_BYTES = "15mb";
 function extensionFromContentType(contentType) {
   if (!contentType) return ".audio";
@@ -33582,7 +33652,7 @@ voiceRouter.post(
       });
       return;
     }
-    const tmpFile = join2("/tmp", `magic_voice_${randomUUID2()}${extensionFromContentType(req.headers["content-type"])}`);
+    const tmpFile = join3("/tmp", `magic_voice_${randomUUID2()}${extensionFromContentType(req.headers["content-type"])}`);
     try {
       writeFileSync2(tmpFile, audio);
       const result = await runMagicTextEncoder(tmpFile, mode);
@@ -33673,12 +33743,7 @@ if (existsSync4(FRONTEND_DIST)) {
 var app_default = app;
 
 // src/index.ts
-var rawPort = process.env["PORT"];
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided."
-  );
-}
+var rawPort = process.env["PORT"] ?? "8080";
 var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);

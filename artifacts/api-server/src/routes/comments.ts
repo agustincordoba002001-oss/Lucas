@@ -2,11 +2,31 @@ import { Router }      from "express";
 import { DatabaseSync } from "node:sqlite";
 import { existsSync, readFileSync } from "fs";
 import { spawn }       from "child_process";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
+
+import {
+  tokenizeIntelligent,
+  groupIntoMicroPhrases,
+  getMicroPhraseAudio,
+  storeMicroPhraseAudio,
+  generateTTSParams,
+  updateLearningContext,
+  getLearningStats,
+  createLearningContext,
+  type LearningContext,
+  type MicroPhrase,
+  type SemanticToken,
+  type TTSParams,
+} from "../lib/intelligent-nexus.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = process.env["WORKSPACE_ROOT"] ?? join(__dirname, "../../../..");
 
 const commentsRouter = Router();
 
-const DB_PATH        = "/home/runner/workspace/comments.db";
-const JSON_PATH      = "/home/runner/workspace/comments.json";
+const DB_PATH        = process.env["COMMENTS_DB_PATH"] ?? join(REPO_ROOT, "comments.db");
+const JSON_PATH      = process.env["COMMENTS_JSON_PATH"] ?? join(REPO_ROOT, "comments.json");
 const TTS_API        = process.env["TTS_API_URL"] ?? "http://127.0.0.1:5000/api/tts/generate";
 const TTS_SERVICE    = process.env["TTS_SERVICE_URL"] ?? "http://127.0.0.1:5001";
 
@@ -17,6 +37,24 @@ const PHOTON_MEMORY_LIMIT_BYTES = 50 * 1024 * 1024;
 const photonMemoryCache = new Map<string, PhotonMemoryAudio>();
 const photonWarmups = new Map<string, Promise<void>>();
 let photonMemoryBytes = 0;
+
+// ─── CONTEXTOS DE APRENDIZAJE INTELIGENTE ─────────────────────────────────
+const voiceLearningContexts = new Map<string, LearningContext>();
+const microphraseAudioCache = new Map<string, Map<string, MicroPhrase>>();
+
+function getOrCreateLearningContext(voiceId: string): LearningContext {
+  if (!voiceLearningContexts.has(voiceId)) {
+    voiceLearningContexts.set(voiceId, createLearningContext(voiceId));
+  }
+  return voiceLearningContexts.get(voiceId)!;
+}
+
+function getOrCreateMicrophraseCache(voiceId: string): Map<string, MicroPhrase> {
+  if (!microphraseAudioCache.has(voiceId)) {
+    microphraseAudioCache.set(voiceId, new Map());
+  }
+  return microphraseAudioCache.get(voiceId)!;
+}
 
 function photonCacheKey(voiceId: string, photonCapsule: string | null, texto: string) {
   return photonCapsule ? `photon:${voiceId}:${photonCapsule}:${texto}` : voiceId;
@@ -135,7 +173,22 @@ db.exec(`
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
     PRIMARY KEY (voice_id, word_norm)
   );
+  
+  CREATE TABLE IF NOT EXISTS voice_microphrases_intelligent (
+    voice_id      TEXT NOT NULL,
+    signature     TEXT NOT NULL,
+    tokens_json   TEXT NOT NULL,
+    audio         BLOB,
+    bytes         INTEGER,
+    learning_score REAL NOT NULL DEFAULT 0.5,
+    usage_count   INTEGER NOT NULL DEFAULT 0,
+    emotion       TEXT,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_used_at  INTEGER NOT NULL DEFAULT (unixepoch()),
+    PRIMARY KEY (voice_id, signature)
+  );
 `);
+
 
 const NEXUS_VOICE_WHITELIST = new Set([
   "darwin-xtts", "diever", "nexus", "nexus-ultra",
@@ -175,6 +228,7 @@ function expandExpressiveTagsLocal(text: string): string {
   });
 }
 
+// === LEGACY: Solo palabras (deprecated, mantener para compatibilidad) ===
 function splitWords(text: string): string[] {
   const expanded = expandExpressiveTagsLocal(text);
   const out: string[] = [];
@@ -183,6 +237,15 @@ function splitWords(text: string): string[] {
     if (norm) out.push(norm);
   }
   return out;
+}
+
+// === INTELIGENTE: Análisis semántico profundo → microfrases ===
+function splitIntoMicroPhrases(text: string, voiceId: string): MicroPhrase[] {
+  const context = getOrCreateLearningContext(voiceId);
+  const tokens = tokenizeIntelligent(text, voiceId, context);
+  const microphrases = groupIntoMicroPhrases(tokens);
+  updateLearningContext(voiceId, microphrases, context);
+  return microphrases;
 }
 
 function concatWavBuffers(bufs: Buffer[]): Buffer {
@@ -197,6 +260,124 @@ function concatWavBuffers(bufs: Buffer[]): Buffer {
   out.writeUInt32LE(totalPcm.length, 40);
   totalPcm.copy(out, 44);
   return out;
+}
+
+// === CONCATENACIÓN FLUIDA SIN CLICKS ===
+// Versión mejorada: crossfade + suavización para leer "de corrido"
+function concatWavBuffersFluid(bufs: Buffer[]): Buffer {
+  if (bufs.length === 0) throw new Error("Sin buffers WAV");
+  if (bufs.length === 1) return bufs[0];
+  
+  // Extraer PCM data
+  const pcmParts = bufs.map((b) => b.slice(44));
+  
+  // Aplicar crossfade entre cada par de buffers (50ms @ 24kHz = 1200 samples)
+  const CROSSFADE_SAMPLES = Math.floor(24000 * 0.05); // 50ms
+  const SAMPLE_SIZE = 2; // 16-bit = 2 bytes
+  
+  const result: Buffer[] = [];
+  
+  for (let i = 0; i < pcmParts.length; i++) {
+    const part = pcmParts[i];
+    
+    if (i === 0) {
+      // Primer buffer: agregar fade-in (3ms)
+      const fadeInSamples = Math.floor(24000 * 0.003);
+      const faded = applyFadeIn(part, fadeInSamples);
+      result.push(faded);
+    } else {
+      // Buffer siguiente: crossfade con anterior
+      const prev = result[result.length - 1];
+      const crossfaded = applyCrossfade(prev, part, CROSSFADE_SAMPLES);
+      result[result.length - 1] = crossfaded;
+    }
+  }
+  
+  // Agregar fade-out al final (5ms)
+  const lastIdx = result.length - 1;
+  const fadeOutSamples = Math.floor(24000 * 0.005);
+  result[lastIdx] = applyFadeOut(result[lastIdx], fadeOutSamples);
+  
+  // Concatenar todo
+  const totalPcm = Buffer.concat(result);
+  const hdr = bufs[0].slice(0, 44);
+  const out = Buffer.alloc(44 + totalPcm.length);
+  hdr.copy(out, 0);
+  out.writeUInt32LE(totalPcm.length + 36, 4);
+  out.writeUInt32LE(totalPcm.length, 40);
+  totalPcm.copy(out, 44);
+  
+  return out;
+}
+
+function applyFadeIn(buf: Buffer, samples: number): Buffer {
+  const out = Buffer.from(buf);
+  const SAMPLE_SIZE = 2;
+  
+  for (let i = 0; i < Math.min(samples, buf.length / SAMPLE_SIZE); i++) {
+    const factor = i / samples;
+    const offset = i * SAMPLE_SIZE;
+    const sample = out.readInt16LE(offset);
+    out.writeInt16LE(Math.floor(sample * factor), offset);
+  }
+  
+  return out;
+}
+
+function applyFadeOut(buf: Buffer, samples: number): Buffer {
+  const out = Buffer.from(buf);
+  const SAMPLE_SIZE = 2;
+  const totalSamples = buf.length / SAMPLE_SIZE;
+  
+  for (let i = Math.max(0, totalSamples - samples); i < totalSamples; i++) {
+    const factor = (totalSamples - i) / samples;
+    const offset = i * SAMPLE_SIZE;
+    if (offset + SAMPLE_SIZE <= buf.length) {
+      const sample = out.readInt16LE(offset);
+      out.writeInt16LE(Math.floor(sample * factor), offset);
+    }
+  }
+  
+  return out;
+}
+
+function applyCrossfade(buf1: Buffer, buf2: Buffer, crossfadeSamples: number): Buffer {
+  const SAMPLE_SIZE = 2;
+  const samples1 = buf1.length / SAMPLE_SIZE;
+  const samples2 = buf2.length / SAMPLE_SIZE;
+  
+  // Tomar últimos N samples de buf1 y primeros N de buf2
+  const fadeStart1 = Math.max(0, samples1 - crossfadeSamples);
+  const fadeStart2 = 0;
+  const fadeEnd2 = Math.min(crossfadeSamples, samples2);
+  
+  // Crear buffer de fadein/fadeout
+  const faded = Buffer.alloc(buf1.length + buf2.length - (crossfadeSamples * SAMPLE_SIZE));
+  
+  // Copiar todo buf1 excepto el final
+  buf1.copy(faded, 0, 0, fadeStart1 * SAMPLE_SIZE);
+  
+  // Aplicar crossfade en la zona de overlap
+  let offset = fadeStart1 * SAMPLE_SIZE;
+  for (let i = 0; i < crossfadeSamples && fadeStart1 + i < samples1 && fadeStart2 + i < samples2; i++) {
+    const factor1 = (crossfadeSamples - i) / crossfadeSamples;
+    const factor2 = i / crossfadeSamples;
+    
+    const sample1 = buf1.readInt16LE((fadeStart1 + i) * SAMPLE_SIZE) * factor1;
+    const sample2 = buf2.readInt16LE((fadeStart2 + i) * SAMPLE_SIZE) * factor2;
+    const mixed = Math.floor(sample1 + sample2);
+    const clamped = Math.max(-32768, Math.min(32767, mixed));
+    
+    faded.writeInt16LE(clamped, offset);
+    offset += SAMPLE_SIZE;
+  }
+  
+  // Copiar resto de buf2
+  if (fadeEnd2 * SAMPLE_SIZE < buf2.length) {
+    buf2.copy(faded, offset, fadeEnd2 * SAMPLE_SIZE);
+  }
+  
+  return faded;
 }
 
 function transcodeToWav(input: Buffer): Promise<Buffer> {
@@ -302,6 +483,34 @@ commentsRouter.get("/voice-dict/stats", (req, res) => {
   const rows = db.prepare("SELECT voice_id AS voiceId, COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio GROUP BY voice_id").all() as { voiceId: string; words: number; bytes: number }[];
   const total = db.prepare("SELECT COUNT(*) AS words, COALESCE(SUM(bytes),0) AS bytes FROM voice_word_audio").get() as { words: number; bytes: number };
   res.json({ perVoice: rows, total });
+});
+
+// ── GET /voice-learning-stats ────────────────────────────────────────────────
+// Estadísticas del motor inteligente Nexus v2
+commentsRouter.get("/voice-learning-stats", (req, res) => {
+  const voiceId = (req.query.voiceId as string | undefined)?.trim();
+  try {
+    if (voiceId) {
+      const context = getOrCreateLearningContext(voiceId);
+      const stats = getLearningStats(context);
+      res.json({
+        voiceId,
+        ...stats,
+        engine: "nexus-v2-intelligent",
+      });
+      return;
+    }
+    
+    // Stats para todas las voces
+    const allStats: Record<string, object> = {};
+    for (const [vid, context] of voiceLearningContexts.entries()) {
+      allStats[vid] = getLearningStats(context);
+    }
+    
+    res.json({ allVoices: allStats, engine: "nexus-v2-intelligent" });
+  } catch (e) {
+    res.status(500).json({ error: (e as Error).message });
+  }
 });
 
 // Migrar desde JSON si la tabla está vacía
@@ -539,10 +748,10 @@ commentsRouter.post("/comments", async (req, res) => {
     (autor.trim() || "Anónimo"),
     texto.trim(),
     initialAudioData,
-    photonCapsule?.trim() || null,
+    (photonCapsule?.trim() || null) as string | null,
     Number.isFinite(photonBytes) ? photonBytes : null,
-    photonMode?.trim() || null,
-    photonEncoding?.trim() || null,
+    (photonMode?.trim() || null) as string | null,
+    (photonEncoding?.trim() || null) as string | null,
     safeStorageMode,
     wordSeqJson,
     nexusVoiceId,

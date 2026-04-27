@@ -60,7 +60,7 @@ def get_cond(ref_path: str, gpt_cond_len: int = 3, max_ref_length: int = 10):
         _cond_cache[key] = (gpt_lat, spk_emb)
     return _cond_cache[key]
 
-_DIEVER_REF = "/home/runner/workspace/diever_referencia.wav"
+_DIEVER_REF = "/workspaces/Lucas/diever_referencia.wav"
 if os.path.exists(_DIEVER_REF):
     get_cond(_DIEVER_REF)
 

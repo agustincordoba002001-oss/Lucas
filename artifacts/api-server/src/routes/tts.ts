@@ -7,13 +7,13 @@ import { existsSync, unlinkSync, mkdirSync, readFileSync, writeFileSync, readdir
 const ttsRouter = Router();
 
 const TTS_SERVICE        = process.env["TTS_SERVICE_URL"] ?? "http://127.0.0.1:5001";
-const DIEVER_REF         = "/home/runner/workspace/diever_referencia.wav";
-const NEXUS_REF          = "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
-const NEXUS_CONFIG       = "/home/runner/workspace/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
+const DIEVER_REF         = "/workspaces/Lucas/diever_referencia.wav";
+const NEXUS_REF          = "/workspaces/Lucas/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx";
+const NEXUS_CONFIG       = "/workspaces/Lucas/attached_assets/NEXUS_OFFLINE.onnx_1776029964832.json";
 const NEXUS_ULTRA_REF    = NEXUS_REF;
-const NEXUS_ULTRA_CONFIG = "/home/runner/workspace/attached_assets/NEXUS_ULTRA_FAST_1776036098561.json";
+const NEXUS_ULTRA_CONFIG = "/workspaces/Lucas/attached_assets/NEXUS_ULTRA_FAST_1776036098561.json";
 const NEXUS_PIPER_PATCH  = "nexus-piper-patch";
-const DAEMON_SCRIPT      = "/home/runner/workspace/xtts_daemon.py";
+const DAEMON_SCRIPT      = "/workspaces/Lucas/xtts_daemon.py";
 
 // ── XTTS Daemon ───────────────────────────────────────────────────────────────
 let daemon: ChildProcess | null = null;
@@ -456,7 +456,7 @@ function concatWavBuffers(bufs: Buffer[]): Buffer {
 // reiniciar el server) y que clicks dobles no encolen al daemon XTTS.
 //
 // Layout:  /home/runner/workspace/.tts_cache/<sha1(voiceId::texto)>.wav
-const TTS_CACHE_DIR    = "/home/runner/workspace/.tts_cache";
+const TTS_CACHE_DIR    = "/workspaces/Lucas/.tts_cache";
 const TTS_INFLIGHT     = new Map<string, Promise<Buffer>>();
 const TTS_CACHE_LIMIT  = 500;   // archivos máx en disco
 
@@ -730,7 +730,7 @@ ttsRouter.post("/tts/generate", async (req, res) => {
     try {
       await new Promise<void>((resolve, reject) => {
         const proc = spawn("python3", [
-          "/home/runner/workspace/tts_engine.py",
+          "/workspaces/Lucas/tts_engine.py",
           text, voz.voice!, voz.pitch!, voz.rate!, tmpFile,
         ]);
         let stderr = "";

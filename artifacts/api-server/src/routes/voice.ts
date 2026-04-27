@@ -6,7 +6,7 @@ import { join } from "path";
 
 const voiceRouter = Router();
 
-const ENCODER_SCRIPT = "/home/runner/workspace/voice_magic_text.py";
+const ENCODER_SCRIPT = "/workspaces/Lucas/voice_magic_text.py";
 const MAX_AUDIO_BYTES = "15mb";
 
 function extensionFromContentType(contentType: string | undefined): string {

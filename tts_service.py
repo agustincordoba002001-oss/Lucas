@@ -18,30 +18,30 @@ app = Flask(__name__)
 # ── Piper — carga en memoria al arrancar ──────────────────────────────────────
 _piper = {}
 _PIPER_MODELS = {
-    "claude-mx":   "/home/runner/workspace/piper_voices/es_MX-claude-high.onnx",
-    "daniela-ar":  "/home/runner/workspace/piper_voices/es_AR-daniela-high.onnx",
-    "carlfm-es":   "/home/runner/workspace/piper_voices/es_ES-carlfm-x_low.onnx",
-    "davefx-es":   "/home/runner/workspace/piper_voices/es_ES-davefx-medium.onnx",
+    "claude-mx":   "/workspaces/Lucas/piper_voices/es_MX-claude-high.onnx",
+    "daniela-ar":  "/workspaces/Lucas/piper_voices/es_AR-daniela-high.onnx",
+    "carlfm-es":   "/workspaces/Lucas/piper_voices/es_ES-carlfm-x_low.onnx",
+    "davefx-es":   "/workspaces/Lucas/piper_voices/es_ES-davefx-medium.onnx",
 }
 
 # mode "pitch"  → solo ajuste de tono (librosa, rápido)
 # mode "world"  → conversión completa pitch + timbre (WORLD vocoder)
 # "refs" acepta lista de WAVs para promediar el modelo espectral (más preciso)
 _DARWIN_REFS = [
-    "/home/runner/workspace/diever_2_minutos.wav",      # 128s — fuente principal
-    "/home/runner/workspace/diever_referencia.wav",     # 20s
-    "/home/runner/workspace/voz_clonada_diever.wav",    # 9.5s
-    "/home/runner/workspace/diever_muñoz_clonado.wav",  # 5.9s
+    "/workspaces/Lucas/diever_2_minutos.wav",      # 128s — fuente principal
+    "/workspaces/Lucas/diever_referencia.wav",     # 20s
+    "/workspaces/Lucas/voz_clonada_diever.wav",    # 9.5s
+    "/workspaces/Lucas/diever_muñoz_clonado.wav",  # 5.9s
 ]
 _PATCHED_VOICES = {
     "nexus-piper-patch": {
         "base": "davefx-es",
-        "ref":  "/home/runner/workspace/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx",
+        "ref":  "/workspaces/Lucas/attached_assets/NEXUS_VOZ_OFFLINE_1776028665996.onnx",
         "mode": "pitch",
     },
     "lolo-piper-patch": {
         "base": "davefx-es",
-        "ref":  "/home/runner/workspace/attached_assets/clon_lolo_directo_(6)_1776048168673.wav",
+        "ref":  "/workspaces/Lucas/attached_assets/clon_lolo_directo_(6)_1776048168673.wav",
         "mode": "pitch",
     },
     "darwin-piper-patch": {
@@ -551,8 +551,8 @@ def piper():
 # distinta — el timbre se reemplaza siempre por el de la voz destino, así que la
 # salida nunca contiene la voz original de la risa.
 _LAUGH_REFS = {
-    "default": "/home/runner/workspace/attached_assets/descarga_(2)_(1)_1776888865266.wav",
-    "katja":   "/home/runner/workspace/attached_assets/katjasavia-female-sensual-laughter-218077_1777148503594.mp3",
+    "default": "/workspaces/Lucas/attached_assets/descarga_(2)_(1)_1776888865266.wav",
+    "katja":   "/workspaces/Lucas/attached_assets/katjasavia-female-sensual-laughter-218077_1777148503594.mp3",
 }
 _DEFAULT_LAUGH_REF = "default"
 
