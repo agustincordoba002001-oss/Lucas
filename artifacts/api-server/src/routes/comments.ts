@@ -4,6 +4,22 @@ import { existsSync, readFileSync } from "fs";
 import { spawn }       from "child_process";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import ffmpeg from 'fluent-ffmpeg';
+
+function wavToOpus(buffer: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    ffmpeg()
+      .input(buffer)
+      .inputFormat('wav')
+      .outputFormat('opus')
+      .outputOptions('-c:a libopus')
+      .on('end', () => resolve(Buffer.concat(chunks)))
+      .on('error', reject)
+      .pipe()
+      .on('data', (chunk: Buffer) => chunks.push(chunk));
+  });
+}
 
 import {
   tokenizeIntelligent,
@@ -248,6 +264,70 @@ function splitIntoMicroPhrases(text: string, voiceId: string): MicroPhrase[] {
   return microphrases;
 }
 
+// === GENERAR AUDIO PARA MICROFRASE ===
+async function generateMicroPhraseAudio(voiceId: string, mpData: any): Promise<MicroPhrase> {
+  const tokens = mpData.tokens || [];
+  const texto = tokens.map((t: any) => t.word).join(" ");
+  
+  // Generar parámetros TTS inteligentes
+  const params = generateTTSParams({
+    tokens: tokens.map((t: any) => ({
+      word: t.word,
+      lemma: t.word, // simplificado
+      pos: "noun" as const,
+      context: "",
+      emotion: t.emotion || "neutral",
+      prosody: [],
+      position: "middle" as const,
+      isQuestion: false,
+      emphasisLevel: t.emphasisLevel || 0,
+    })),
+    audio: undefined,
+    signature: mpData.signature,
+    learningScore: 0.5,
+    usageCount: 0,
+  });
+
+  // Llamar al TTS con parámetros inteligentes
+  const ttsBody = {
+    texto,
+    voiceId,
+    speed: params.speed || 1.0,      // 0.5-2.0
+    pitch: params.pitch || 1.0,      // 0.5-2.0
+    rate: `${Math.round((params.speed || 1) * 100)}%`,  // Edge TTS rate format
+    emotion: params.emotion || "neutral",
+    ...params,
+  };
+  
+  const ttsRes = await fetch(TTS_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(ttsBody),
+  });
+
+  if (!ttsRes.ok) throw new Error(`TTS error ${ttsRes.status} para microfrase`);
+  
+  const audio = Buffer.from(await ttsRes.arrayBuffer());
+  
+  return {
+    tokens: tokens.map((t: any) => ({
+      word: t.word,
+      lemma: t.word,
+      pos: "noun" as const,
+      context: "",
+      emotion: t.emotion || "neutral",
+      prosody: [],
+      position: "middle" as const,
+      isQuestion: false,
+      emphasisLevel: t.emphasisLevel || 0,
+    })),
+    audio,
+    signature: mpData.signature,
+    learningScore: 0.5,
+    usageCount: 0,
+  };
+}
+
 function concatWavBuffers(bufs: Buffer[]): Buffer {
   if (bufs.length === 0) throw new Error("Sin buffers WAV");
   if (bufs.length === 1) return bufs[0];
@@ -271,8 +351,8 @@ function concatWavBuffersFluid(bufs: Buffer[]): Buffer {
   // Extraer PCM data
   const pcmParts = bufs.map((b) => b.slice(44));
   
-  // Aplicar crossfade entre cada par de buffers (50ms @ 24kHz = 1200 samples)
-  const CROSSFADE_SAMPLES = Math.floor(24000 * 0.05); // 50ms
+  // Aplicar crossfade entre cada par de buffers (150ms @ 24kHz = 3600 samples - más suave)
+  const CROSSFADE_SAMPLES = Math.floor(24000 * 0.15); // 150ms (aumentado de 50ms)
   const SAMPLE_SIZE = 2; // 16-bit = 2 bytes
   
   const result: Buffer[] = [];
@@ -446,23 +526,38 @@ async function ensureWordInDict(voiceId: string, wordNorm: string, opts?: { maxR
 type NexusPopState = { promise: Promise<void>; total: number; done: number; failed: number };
 const nexusPopulations = new Map<string, NexusPopState>();
 
-function startNexusPopulation(commentId: string, voiceId: string, words: string[]): NexusPopState {
+function startNexusPopulation(commentId: string, voiceId: string, microphraseSignatures: string[]): NexusPopState {
   const existing = nexusPopulations.get(commentId);
   if (existing) return existing;
 
   const state: NexusPopState = {
-    total: words.length, done: 0, failed: 0,
+    total: microphraseSignatures.length, done: 0, failed: 0,
     promise: Promise.resolve(),
   };
 
   state.promise = (async () => {
-    for (const w of words) {
+    for (const signature of microphraseSignatures) {
       try {
-        await ensureWordInDict(voiceId, w);
+        // Buscar la microfrase en la secuencia del comentario
+        const commentRow = db.prepare("SELECT word_seq FROM comentarios WHERE id = ?").get(commentId) as { word_seq: string | null } | undefined;
+        if (!commentRow?.word_seq) continue;
+        
+        const microphraseSeq = JSON.parse(commentRow.word_seq);
+        const mpData = microphraseSeq.find((mp: any) => mp.signature === signature);
+        if (!mpData) continue;
+        
+        // Generar y almacenar la microfrase
+        const microphrase = await generateMicroPhraseAudio(voiceId, mpData);
+        storeMicroPhraseAudio(microphrase, microphrase.audio!, getOrCreateMicrophraseCache(voiceId));
+        
+        // Guardar en BD
+        db.prepare("INSERT OR REPLACE INTO voice_microphrases_intelligent (voice_id, signature, tokens_json, audio, bytes, learning_score, usage_count, emotion) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(voiceId, signature, JSON.stringify(mpData.tokens), microphrase.audio, microphrase.audio!.byteLength, microphrase.learningScore, microphrase.usageCount, mpData.tokens[0]?.emotion || "neutral");
+        
         state.done++;
       } catch (e) {
         state.failed++;
-        console.warn(`[NexusPop ${commentId}] palabra "${w}" falló:`, (e as Error).message);
+        console.warn(`[NexusPop ${commentId}] microfrase "${signature}" falló:`, (e as Error).message);
       }
     }
   })().finally(() => {
@@ -559,12 +654,12 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
   if (isNexusDecreciente) {
     const fullRow = db.prepare("SELECT word_seq, nexus_voice_id FROM comentarios WHERE id = ?").get(id) as { word_seq: string | null; nexus_voice_id: string | null } | undefined;
     const dictVoice = fullRow?.nexus_voice_id || voiceId;
-    let words: string[] = [];
-    try { words = JSON.parse(fullRow?.word_seq ?? "[]"); } catch { words = []; }
-    if (words.length === 0) { res.status(404).json({ error: "Sin palabras en la secuencia" }); return; }
+    let microphraseSeq: any[] = [];
+    try { microphraseSeq = JSON.parse(fullRow?.word_seq ?? "[]"); } catch { microphraseSeq = []; }
+    if (microphraseSeq.length === 0) { res.status(404).json({ error: "Sin microfrases en la secuencia" }); return; }
 
     // Si la población background sigue corriendo, esperá a que termine antes
-    // de armar el audio para evitar palabras faltantes en el primer play.
+    // de armar el audio para evitar microfrases faltantes en el primer play.
     const pop = nexusPopulations.get(id);
     if (pop) {
       try { await pop.promise; } catch { /* fail-soft, intentamos servir igual */ }
@@ -572,26 +667,32 @@ commentsRouter.get("/comments/:id/audio", async (req, res) => {
 
     try {
       const buffers: Buffer[] = [];
-      for (const w of words) {
-        let row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w) as { audio: Buffer } | undefined;
+      for (const mpData of microphraseSeq) {
+        const signature = mpData.signature;
+        let row = db.prepare("SELECT audio FROM voice_microphrases_intelligent WHERE voice_id = ? AND signature = ?").get(dictVoice, signature) as { audio: Buffer } | undefined;
         if (!row) {
+          // Generar microfrase on-demand
           try {
-            await ensureWordInDict(dictVoice, w);
+            const microphrase = await generateMicroPhraseAudio(dictVoice, mpData);
+            if (microphrase.audio) {
+              storeMicroPhraseAudio(microphrase, microphrase.audio, getOrCreateMicrophraseCache(dictVoice));
+              row = { audio: microphrase.audio };
+            }
           } catch (err) {
-            console.warn(`[NexusPlay] omitiendo palabra "${w}":`, (err as Error).message);
+            console.warn(`[NexusPlay] microfrase "${signature}" falló:`, (err as Error).message);
           }
-          row = db.prepare("SELECT audio FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w) as { audio: Buffer } | undefined;
         }
         if (row?.audio) buffers.push(Buffer.from(row.audio));
       }
       if (buffers.length === 0) { res.status(503).json({ error: "No se pudo armar el audio (diccionario vacío, intentá de nuevo en unos segundos)" }); return; }
-      const audio = concatWavBuffers(buffers);
-      res.setHeader("Content-Type", "audio/wav");
+      const audio = concatWavBuffersFluid(buffers); // ← FLUIDO PARA LEER DE CORRIDO
+      const opusAudio = await wavToOpus(audio);
+      res.setHeader("Content-Type", "audio/opus");
       res.setHeader("X-Seed", "NEXUS-DECRECIENTE");
-      res.setHeader("X-Nexus-Words", words.length.toString());
-      res.setHeader("X-Nexus-Words-Used", buffers.length.toString());
+      res.setHeader("X-Nexus-Microphrases", microphraseSeq.length.toString());
+      res.setHeader("X-Nexus-Microphrases-Used", buffers.length.toString());
       res.setHeader("X-Nexus-Voice", dictVoice);
-      res.send(audio);
+      res.send(opusAudio);
       return;
     } catch (e) {
       res.status(503).json({ error: (e as Error).message });
@@ -720,19 +821,27 @@ commentsRouter.post("/comments", async (req, res) => {
   let nexusWordsToPopulate: string[] | null = null;
   if (safeStorageMode === "nexus-decreciente") {
     const dictVoice = NEXUS_VOICE_WHITELIST.has(voiceId) ? voiceId : "darwin-xtts";
-    const words = splitWords(texto.trim());
+    // === USAR ANÁLISIS INTELIGENTE ===
+    const microphrases = splitIntoMicroPhrases(texto.trim(), dictVoice);
+    const words = microphrases.flatMap(mp => mp.tokens.map(t => t.word));
     if (words.length === 0) { res.status(400).json({ error: "texto sin palabras válidas" }); return; }
 
-    // Sólo nos preocupan las palabras que aún no están en el diccionario.
+    // Guardar secuencia de microfrases, no solo palabras
+    const microphraseSeq = microphrases.map(mp => ({
+      signature: mp.signature,
+      tokens: mp.tokens.map(t => ({ word: t.word, emotion: t.emotion, emphasisLevel: t.emphasisLevel }))
+    }));
+    wordSeqJson = JSON.stringify(microphraseSeq);
+
+    // Solo nos preocupan las microfrases que aún no están en el diccionario
     const missing: string[] = [];
-    for (const w of words) {
-      const row = db.prepare("SELECT 1 FROM voice_word_audio WHERE voice_id = ? AND word_norm = ?").get(dictVoice, w);
-      if (!row) missing.push(w);
+    for (const mp of microphrases) {
+      const row = db.prepare("SELECT 1 FROM voice_microphrases_intelligent WHERE voice_id = ? AND signature = ?").get(dictVoice, mp.signature);
+      if (!row) missing.push(mp.signature);
     }
 
-    wordSeqJson = JSON.stringify(words);
     nexusVoiceId = dictVoice;
-    nexusWordsToPopulate = missing;
+    nexusWordsToPopulate = missing; // Ahora son signatures de microfrases
     nexusStats = { wordsTotal: words.length, wordsNew: missing.length, dictBytesAdded: 0 };
   }
 

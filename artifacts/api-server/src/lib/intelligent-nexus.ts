@@ -20,7 +20,7 @@ export interface SemanticToken {
   lemma: string; // raíz de la palabra (si es plural → sing, tiempos verbales → infinitivo)
   pos: "noun" | "verb" | "adj" | "adv" | "prep" | "conj" | "punct" | "intj"; // part of speech
   context: string; // contexto anterior (2 palabras)
-  emotion: "neutral" | "excited" | "calm" | "sad" | "questioning" | "emphatic";
+  emotion: "neutral" | "excited" | "calm" | "sad" | "questioning" | "emphatic" | "surprised" | "angry";
   prosody: ProsodicMarker[];
   position: "start" | "middle" | "end" | "standalone"; // posición en frase
   isQuestion: boolean;
@@ -63,12 +63,18 @@ const SPANISH_LEMMAS: Record<string, string> = {
 const PART_OF_SPEECH: Record<string, "noun" | "verb" | "adj" | "adv" | "prep" | "conj" | "punct" | "intj"> = {
   // Preposiciones
   "de": "prep", "en": "prep", "a": "prep", "por": "prep", "para": "prep", "con": "prep", "sin": "prep",
-  // Conjunciones
+  "hacia": "prep", "desde": "prep", "entre": "prep", "durante": "prep",
+  // Conjunciones y conectores (NO deben generar pausas)
   "y": "conj", "o": "conj", "pero": "conj", "sino": "conj", "porque": "conj", "aunque": "conj",
+  "entonces": "conj", "luego": "conj", "después": "conj", "mientras": "conj", "cuando": "conj",
+  "si": "conj", "pues": "conj", "además": "conj", "sin embargo": "conj",
+  // Palabras clave que necesitan énfasis
+  "siempre": "adv", "nunca": "adv", "jamás": "adv", "todavía": "adv", "aún": "adv",
   // Adverbios comunes
-  "no": "adv", "sí": "adv", "muy": "adv", "bien": "adv", "mal": "adv", "siempre": "adv",
+  "no": "adv", "sí": "adv", "muy": "adv", "bien": "adv", "mal": "adv", "realmente": "adv",
+  "verdaderamente": "adv", "ciertamente": "adv", "definitivamente": "adv",
   // Interjecciones
-  "aja": "intj", "ajá": "intj", "mm": "intj", "eh": "intj", "uh": "intj",
+  "aja": "intj", "ajá": "intj", "mm": "intj", "eh": "intj", "uh": "intj", "wow": "intj",
 };
 
 function getLemma(word: string): string {
@@ -92,23 +98,29 @@ function getPartOfSpeech(word: string): "noun" | "verb" | "adj" | "adv" | "prep"
 
 // ─── ANÁLISIS EMOCIONAL Y ENTONACIÓN ──────────────────────────────────────
 
-function detectEmotion(word: string, nextWord?: string, isPunctuation?: boolean): "neutral" | "excited" | "calm" | "sad" | "questioning" | "emphatic" {
+function detectEmotion(word: string, nextWord?: string, isPunctuation?: boolean): "neutral" | "excited" | "calm" | "sad" | "questioning" | "emphatic" | "surprised" | "angry" {
   const lower = word.toLowerCase();
   
-  // Palabras negativas
-  if (["no", "nunca", "jamás", "terrible", "horrible", "malo"].includes(lower)) return "emphatic";
+  // Palabras negativas que dan énfasis
+  if (["no", "nunca", "jamás", "terrible", "horrible", "malo", "peor"].includes(lower)) return "emphatic";
   
-  // Palabras positivas
-  if (["sí", "genial", "excelente", "maravilloso", "perfecto", "amor"].includes(lower)) return "excited";
+  // Palabras positivas intensas
+  if (["sí", "genial", "excelente", "maravilloso", "perfecto", "amor", "feliz", "alegría", "bueno", "mejor"].includes(lower)) return "excited";
   
-  // Preguntas
-  if (isPunctuation && (word === "¿" || nextWord?.startsWith("?"))) return "questioning";
+  // Sorpresa/asombro
+  if (["wow", "oh", "guau", "increíble", "impresionante", "sorprendente"].includes(lower)) return "surprised";
   
-  // Suavidad/calma
-  if (["tranquilo", "suave", "lentamente", "calmado", "paciencia"].includes(lower)) return "calm";
+  // Rabia/enojo
+  if (["mierda", "odio", "furioso", "enojado", "maldición", "asco", "detesto"].includes(lower)) return "angry";
   
-  // Tristeza
-  if (["triste", "lloro", "dolor", "sufro", "perdí", "adiós"].includes(lower)) return "sad";
+  // Preguntas (detecta estructuras interrogativas)
+  if (isPunctuation && (word === "¿" || (nextWord && nextWord.startsWith("?")))) return "questioning";
+  
+  // Calma/serenidad
+  if (["tranquilo", "suave", "lentamente", "calmado", "paciencia", "relajado", "sereno", "paz"].includes(lower)) return "calm";
+  
+  // Tristeza/melancolía
+  if (["triste", "lloro", "dolor", "sufro", "perdí", "adiós", "desesperado", "infeliz", "llorar"].includes(lower)) return "sad";
   
   return "neutral";
 }
@@ -117,17 +129,33 @@ function detectEmphasis(text: string, wordPosition: number, totalWords: number):
   let emphasis = 0;
   
   // Puntuación múltiple = énfasis extremo
-  if (text.match(/!{2,}/)) emphasis += 40;
-  if (text.match(/\?{2,}/)) emphasis += 20;
+  if (text.match(/!{2,}/)) emphasis += 50;
+  if (text.match(/\?{2,}/)) emphasis += 30;
+  if (text.match(/\.{2,}/)) emphasis += 20;
   
-  // MAYÚSCULAS = énfasis
-  if (/[A-Z]{3,}/.test(text)) emphasis += 30;
+  // MAYÚSCULAS = énfasis FUERTE
+  if (/[A-Z]{3,}/.test(text)) emphasis += 40;
+  if (text === text.toUpperCase() && text.length > 2) emphasis += 30;
   
-  // Palabras finales de frase = más énfasis
-  if (wordPosition === totalWords - 1) emphasis += 10;
+  // Palabras clave siempre llevan énfasis
+  const KEYWORD_EMPHASIS: Record<string, number> = {
+    "siempre": 40, "nunca": 40, "jamás": 40, "importante": 35, "momento": 35,
+    "ahora": 30, "hoy": 30, "ayer": 25, "mañana": 25, "verdad": 45,
+    "love": 50, "odio": 50, "perfecto": 40, "horrible": 40,
+  };
+  const lower = text.toLowerCase();
+  if (KEYWORD_EMPHASIS[lower]) {
+    emphasis += KEYWORD_EMPHASIS[lower];
+  }
   
-  // Palabras iniciales (después de pausa) = énfasis moderado
-  if (wordPosition === 0) emphasis += 5;
+  // Palabras finales de frase = más énfasis (conclusión)
+  if (wordPosition === totalWords - 1) emphasis += 15;
+  
+  // Primera palabra después de pausa (posición 0) = inicio importante
+  if (wordPosition === 0) emphasis += 10;
+  
+  // Palabras en el medio pero antes de puntuación = énfasis moderado
+  if (wordPosition === totalWords - 2) emphasis += 8;
   
   return Math.min(100, emphasis);
 }
@@ -224,30 +252,47 @@ function expandSmartTags(text: string): string {
 function generateProsody(emotion: string, emphasis: number, pos: string, isQuestion: boolean): ProsodicMarker[] {
   const prosody: ProsodicMarker[] = [];
   
-  // Velocidad según emoción
-  if (emotion === "excited") {
-    prosody.push({ type: "speed", value: 120, description: "más rápido" });
-  } else if (emotion === "calm") {
-    prosody.push({ type: "speed", value: 80, description: "más lento" });
-  } else if (emotion === "questioning") {
-    prosody.push({ type: "speed", value: 90, description: "entonación interrogativa" });
+  // ─── VELOCIDAD ADAPTATIVA ───
+  let baseSpeed = 100;
+  if (emotion === "excited") baseSpeed = 115;      // +15%
+  else if (emotion === "angry") baseSpeed = 120;   // +20%
+  else if (emotion === "calm") baseSpeed = 85;     // -15%
+  else if (emotion === "questioning") baseSpeed = 95; // -5%
+  else if (emotion === "sad") baseSpeed = 80;      // -20%
+  
+  prosody.push({ type: "speed", value: baseSpeed, description: `velocidad ${baseSpeed}%` });
+  
+  // ─── TONO SEGÚN EMOCIÓN Y POSICIÓN ───
+  let basePitch = 100;
+  if (emotion === "excited") basePitch = 115;
+  else if (emotion === "surprised") basePitch = 125;
+  else if (emotion === "angry") basePitch = 105;
+  else if (emotion === "sad") basePitch = 70;
+  else if (emotion === "calm") basePitch = 90;
+  else if (emotion === "questioning") basePitch = 110; // Subida de tono al final
+  
+  // Palabras clave reciben +tono
+  if (emphasis > 60) basePitch += 10;
+  
+  prosody.push({ type: "pitch", value: Math.max(50, Math.min(150, basePitch)), description: `tono ${basePitch}%` });
+  
+  // ─── VOLUMEN SEGÚN ÉNFASIS ───
+  const volume = Math.min(130, 100 + Math.max(0, (emphasis - 30) * 0.8));
+  if (volume > 100) {
+    prosody.push({ type: "volume", value: volume, description: "énfasis de volumen" });
   }
   
-  // Tono según emoción
-  if (emotion === "excited") {
-    prosody.push({ type: "pitch", value: 120, description: "tono más agudo" });
-  } else if (emotion === "sad") {
-    prosody.push({ type: "pitch", value: 70, description: "tono más grave" });
-  }
-  
-  // Volumen según énfasis
-  if (emphasis > 50) {
-    prosody.push({ type: "volume", value: 100 + Math.min(30, emphasis), description: "más fuerte" });
-  }
-  
-  // Pausa después de fin de frase
+  // ─── PAUSAS NATURALES ───
+  // Pausa después de fin de frase natural
   if (pos === "end" && !isQuestion) {
-    prosody.push({ type: "pause", value: 100, description: "pausa natural" });
+    prosody.push({ type: "pause", value: 80, description: "pausa después de oración" });
+  } else if (isQuestion) {
+    prosody.push({ type: "pause", value: 60, description: "mini-pausa interrogativa" });
+  }
+  
+  // Pausa después de énfasis
+  if (emphasis > 70) {
+    prosody.push({ type: "pause", value: 40, description: "pausa de énfasis" });
   }
   
   return prosody;
@@ -259,21 +304,41 @@ export function groupIntoMicroPhrases(tokens: SemanticToken[]): MicroPhrase[] {
   const microPhrases: MicroPhrase[] = [];
   let current: SemanticToken[] = [];
   
-  for (const token of tokens) {
+  const NON_BREAKING_CONNECTORS = new Set(["y", "o", "pero", "sino", "porque", "aunque", "entonces", "además"]);
+  
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    const nextToken = tokens[i + 1];
     current.push(token);
     
-    // Fracturamos en:
-    // 1. Punto/coma = nueva microunidad
-    // 2. Después de 4-6 palabras = nueva microunidad
-    // 3. Cambio emocional significativo = nueva microunidad
+    // Reglas para fracturar (crear nueva microunidad):
+    // 1. Punto -> siempre fractura (si tiene >= 3 palabras)
+    // 2. Coma -> fractura SOLO si la siguiente palabra NO es conector (y, pero, etc)
+    // 3. Después de 8-10 palabras -> fractura (máx natural de lectura corrida)
+    // 4. Cambio emocional fuerte -> fractura SOLO si no es conector
     
-    const isPunctuation = token.pos === "punct";
-    const tooLong = current.length > 6;
-    const emotionChange = current.length > 1 && 
-      current[current.length - 1].emotion !== current[current.length - 2].emotion;
+    const isPeriod = token.word === ".";
+    const isComma = token.word === ",";
+    const isSemicolon = token.word === ";";
+    const tooLong = current.length > 10;
     
-    if (isPunctuation || tooLong || emotionChange) {
-      if (current.length > 0) {
+    // Verificar si la siguiente palabra es un conector (no fracturar)
+    const nextIsConnector = nextToken && NON_BREAKING_CONNECTORS.has(nextToken.word.toLowerCase());
+    
+    // Cambio emocional significativo (pero no si es conector)
+    const emotionChange = current.length > 5 && current.length > 1 && 
+      current[current.length - 1].emotion !== current[current.length - 2].emotion &&
+      !isComplementaryEmotion(current[current.length - 1].emotion, current[current.length - 2].emotion) &&
+      !nextIsConnector;
+    
+    // Determinar si fracturar
+    const shouldSplit = isPeriod || isSemicolon || 
+                       (isComma && !nextIsConnector && current.length >= 5) ||
+                       tooLong ||
+                       emotionChange;
+    
+    if (shouldSplit) {
+      if (current.length >= 3) {  // Mínimo 3 palabras por microunidad
         microPhrases.push(createMicroPhrase(current));
         current = [];
       }
@@ -281,11 +346,30 @@ export function groupIntoMicroPhrases(tokens: SemanticToken[]): MicroPhrase[] {
   }
   
   // Microunidad final
-  if (current.length > 0) {
+  if (current.length >= 3) {
+    microPhrases.push(createMicroPhrase(current));
+  } else if (current.length > 0 && microPhrases.length > 0) {
+    // Fusionar palabras huérfanas con la microunidad anterior
+    const last = microPhrases[microPhrases.length - 1];
+    last.tokens.push(...current);
+  } else if (current.length > 0) {
     microPhrases.push(createMicroPhrase(current));
   }
   
   return microPhrases;
+}
+
+function isComplementaryEmotion(e1: string, e2: string): boolean {
+  // Emociones que pueden estar juntas sin fracturar
+  const compatible = new Set([
+    // excited puede ir con emphatic
+    "excited:emphatic",
+    "emphatic:excited",
+    // calm + questioning pueden ir juntas
+    "calm:questioning",
+    "questioning:calm",
+  ]);
+  return compatible.has(`${e1}:${e2}`);
 }
 
 function createMicroPhrase(tokens: SemanticToken[]): MicroPhrase {
@@ -338,35 +422,88 @@ export interface TTSParams {
   speed?: number; // 0.5-2.0
   pitch?: number; // 0.5-2.0
   volume?: number; // 0-100
-  emotion?: string; // "neutral", "excited", "calm", "sad", "emphatic"
+  emotion?: string; // "neutral", "excited", "calm", "sad", "emphatic", "surprised", "angry"
   prosodyMarkups?: string; // markup opcional para el motor TTS
 }
 
 export function generateTTSParams(microPhrase: MicroPhrase): Partial<TTSParams> {
   const params: Partial<TTSParams> = {};
   
-  // Calcular promedios prosódicos
+  // Calcular promedios prosódicos desde tokens
   let totalSpeed = 100, totalPitch = 100, totalVolume = 100;
+  const emphasisLevels: number[] = [];
   let emotionsWeighted: Record<string, number> = {};
   
   for (const token of microPhrase.tokens) {
+    emphasisLevels.push(token.emphasisLevel);
+    emotionsWeighted[token.emotion] = (emotionsWeighted[token.emotion] || 0) + 1;
+    
     for (const prosodyMarker of token.prosody) {
       switch (prosodyMarker.type) {
-        case "speed": totalSpeed += (prosodyMarker.value - 100) * 0.1; break;
-        case "pitch": totalPitch += (prosodyMarker.value - 100) * 0.1; break;
+        case "speed": totalSpeed += (prosodyMarker.value - 100) * 0.15; break;
+        case "pitch": totalPitch += (prosodyMarker.value - 100) * 0.15; break;
         case "volume": totalVolume = prosodyMarker.value; break;
       }
     }
-    emotionsWeighted[token.emotion] = (emotionsWeighted[token.emotion] || 0) + 1;
   }
-  
-  params.speed = totalSpeed / 100;
-  params.pitch = totalPitch / 100;
-  params.volume = Math.min(100, totalVolume);
   
   // Emoción dominante
   const dominantEmotion = Object.entries(emotionsWeighted).sort((a, b) => b[1] - a[1])[0];
-  if (dominantEmotion) params.emotion = dominantEmotion[0];
+  const emotion = dominantEmotion ? dominantEmotion[0] : "neutral";
+  
+  // Base speeds segun emoción
+  let baseSpeed = 100, basePitch = 100, baseVolume = 100;
+  
+  switch (emotion) {
+    case "excited":
+      baseSpeed = 115;
+      basePitch = 120;
+      baseVolume = 110;
+      break;
+    case "surprised":
+      baseSpeed = 110;
+      basePitch = 130;
+      baseVolume = 105;
+      break;
+    case "angry":
+      baseSpeed = 125;
+      basePitch = 110;
+      baseVolume = 120;
+      break;
+    case "sad":
+      baseSpeed = 80;
+      basePitch = 70;
+      baseVolume = 85;
+      break;
+    case "calm":
+      baseSpeed = 90;
+      basePitch = 95;
+      baseVolume = 95;
+      break;
+    case "questioning":
+      baseSpeed = 100;
+      basePitch = 115;
+      baseVolume = 100;
+      break;
+    case "emphatic":
+      baseSpeed = 105;
+      basePitch = 105;
+      baseVolume = 115;
+      break;
+  }
+  
+  // Considerar énfasis promedio para modular aún más
+  const avgEmphasis = emphasisLevels.reduce((a, b) => a + b, 0) / emphasisLevels.length || 0;
+  if (avgEmphasis > 50) {
+    baseSpeed += 5;
+    basePitch += 5;
+    baseVolume += 10;
+  }
+  
+  params.speed = (baseSpeed / 100) * (0.95 + Math.random() * 0.1);  // ±5%
+  params.pitch = (basePitch / 100) * (0.95 + Math.random() * 0.1);  // ±5%
+  params.volume = Math.min(130, Math.max(70, (baseVolume / 100) * 100 * (0.95 + Math.random() * 0.1)));
+  params.emotion = emotion;
   
   // Markup prosódico para motores TTS avanzados
   const markups = microPhrase.tokens

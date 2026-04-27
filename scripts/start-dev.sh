@@ -16,6 +16,7 @@ export NODE_ENV="${NODE_ENV:-production}"
 # Daemon XTTS: lo prende el api-server del ARTIFACT (puerto 8080), que es el
 # que usa el frontend. Para no cargar el modelo XTTS dos veces en RAM, este
 # bundle de :5000 NO lo arranca a menos que se fuerce con XTTS_DAEMON_ENABLED=1.
+export XTTS_DAEMON_ENABLED="${XTTS_DAEMON_ENABLED:-1}"
 export COQUI_TOS_AGREED="${COQUI_TOS_AGREED:-1}"
 export TTS_SERVICE_URL="${TTS_SERVICE_URL:-http://127.0.0.1:${TTS_SERVICE_PORT}}"
 export TTS_API_URL="${TTS_API_URL:-http://127.0.0.1:${PORT}/api/tts/generate}"
